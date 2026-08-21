@@ -56,12 +56,10 @@ Android/data/com.jakobkhansen.silksong/files/
         ├── StreamingAssets/
         ├── globalgamemanagers
         ├── resources.assets
-        └── ... (level0, sharedassets0.assets, boot.config, ...)
+        └── ...
 ```
 
-`Hollow Knight Silksong_Data` has to sit directly inside `depot` — not inside another
-`silksong/` folder — and it keeps everything DepotDownloader put in it, `MonoBleedingEdge`
-and `Managed` included. Press "I have the files" in the app once it is there.
+Press "I have the files" in the app once it is there.
 
 ## Steam Cloud Saves
 
