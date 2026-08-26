@@ -326,6 +326,13 @@ object MonoRuntime {
      * become it, so it is killed. Leaving it would fail differently and worse:
      * the provider would be acquired, the run refused by the process already
      * using it, and the build would blame the compiler.
+     *
+     * A device that will not say which of its own processes exist gets none
+     * of this and goes straight to the call -- [builderRunning] answering
+     * nothing is treated as "not there", so nothing is waited for and no
+     * straggler is ever killed. That is the right way round: the retries in
+     * [startRun] still cover the race this exists for, whereas waiting on a
+     * question that has no answer would cost every run its full timeout.
      */
     private suspend fun awaitBuilderGone(context: Context) {
         if (waitBuilderGone(context)) return
