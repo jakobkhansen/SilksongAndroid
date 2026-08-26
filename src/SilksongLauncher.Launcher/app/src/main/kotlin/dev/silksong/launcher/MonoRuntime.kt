@@ -327,6 +327,14 @@ object MonoRuntime {
      * the provider would be acquired, the run refused by the process already
      * using it, and the build would blame the compiler.
      *
+     * Killed by pid, and deliberately not through [killBuilder]: that one is
+     * killBackgroundProcesses, which is package-wide and takes every process
+     * of this app that is not in the foreground -- including :launcher, which
+     * is where the build is being run from. A build that the user has pressed
+     * Home on is precisely the case MonoProvider exists to survive, so the
+     * one thing this must not do is end it. A signal to one pid cannot: the
+     * two processes share a uid, which is all the kernel asks for.
+     *
      * A device that will not say which of its own processes exist gets none
      * of this and goes straight to the call -- [builderRunning] answering
      * nothing is treated as "not there", so nothing is waited for and no
@@ -336,8 +344,9 @@ object MonoRuntime {
      */
     private suspend fun awaitBuilderGone(context: Context) {
         if (waitBuilderGone(context)) return
-        LauncherLog.log("mono: $BUILDER_PROCESS is still up from an earlier run; ending it")
-        killBuilder(context)
+        val pid = builderPid(context) ?: return
+        LauncherLog.log("mono: $BUILDER_PROCESS ($pid) is still up from an earlier run; ending it")
+        runCatching { android.os.Process.killProcess(pid) }
         waitBuilderGone(context)
     }
 
@@ -352,20 +361,26 @@ object MonoRuntime {
     }
 
     /**
-     * Whether the :builder process exists, or null when that cannot be told.
+     * This app's own processes, or null when the device will not say.
      *
      * getRunningAppProcesses has been useless for looking at other apps since
      * Android 5, and that is not what this is for: an app can still see its
      * own processes, which is exactly the question here. It can still answer
-     * nothing at all, though, and the two callers want opposite things from
-     * that -- so the uncertainty is returned rather than resolved here.
+     * nothing at all, though, and that is passed on rather than resolved --
+     * the callers want opposite things from not knowing.
      */
-    private fun builderRunning(context: Context): Boolean? {
+    private fun ownProcesses(context: Context): List<ActivityManager.RunningAppProcessInfo>? {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return null
-        return runCatching {
-            am.runningAppProcesses?.any { it.processName.endsWith(BUILDER_PROCESS) }
-        }.getOrNull()
+        return runCatching { am.runningAppProcesses }.getOrNull()
     }
+
+    /** Whether the :builder process exists, or null when that cannot be told. */
+    private fun builderRunning(context: Context): Boolean? =
+        ownProcesses(context)?.any { it.processName.endsWith(BUILDER_PROCESS) }
+
+    /** The :builder process's pid, or null if there is not one to be had. */
+    private fun builderPid(context: Context): Int? =
+        ownProcesses(context)?.firstOrNull { it.processName.endsWith(BUILDER_PROCESS) }?.pid
 
     /**
      * True while the :builder process exists.
@@ -377,14 +392,22 @@ object MonoRuntime {
     private fun builderAlive(context: Context): Boolean = builderRunning(context) ?: true
 
     /**
-     * Ends the :builder process, whatever it is doing.
+     * Ends every process of this app that is not in the foreground, :builder
+     * included.
      *
-     * killBackgroundProcesses is the only thing an app can point at one of
-     * its own processes -- there is no "stop" for a provider, and the run is
-     * a thread inside it that nothing here can reach. It needs
-     * KILL_BACKGROUND_PROCESSES, which is a normal permission: granted at
-     * install, no prompt. If it is somehow refused, the worst case is the
-     * process outliving a cancelled build, which is where this started.
+     * Blunter than the pid kill [awaitBuilderGone] uses, and only safe here:
+     * this runs when the build has been cancelled, so :launcher going with it
+     * costs nothing. Anywhere else it would be a bug -- a build the user has
+     * pressed Home on is a background process too.
+     *
+     * The reach is the point. A cancelled run has to stop, and there is no
+     * "stop" for a provider: the run is a thread in another process that
+     * nothing here can name. Killing by pid needs a pid, and the process may
+     * not have got far enough to have one that getRunningAppProcesses will
+     * report. This needs KILL_BACKGROUND_PROCESSES, which is a normal
+     * permission: granted at install, no prompt. If it is somehow refused,
+     * the worst case is the process outliving a cancelled build, which is
+     * where this started.
      */
     private fun killBuilder(context: Context) {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return
