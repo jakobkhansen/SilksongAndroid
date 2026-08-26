@@ -332,8 +332,15 @@ object MonoRuntime {
      * of this app that is not in the foreground -- including :launcher, which
      * is where the build is being run from. A build that the user has pressed
      * Home on is precisely the case MonoProvider exists to survive, so the
-     * one thing this must not do is end it. A signal to one pid cannot: the
-     * two processes share a uid, which is all the kernel asks for.
+     * one thing this must not do is end it.
+     *
+     * A signal to one pid cannot make that mistake. killProcess is a bare
+     * kill(pid, SIGKILL) with nothing in the framework above it, so the only
+     * question is the kernel's, and the two processes share a uid. It is also
+     * allowed to do nothing -- the return value is thrown away, and a vendor
+     * policy is free to refuse the signal without saying so -- which costs a
+     * few seconds of waiting and then leaves things exactly as they were
+     * before any of this: the call is made anyway, and [startRun] retries.
      *
      * A device that will not say which of its own processes exist gets none
      * of this and goes straight to the call -- [builderRunning] answering
