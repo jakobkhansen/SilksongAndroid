@@ -35,6 +35,9 @@ class MonoProvider : ContentProvider() {
     companion object {
         const val METHOD_RUN = "run"
 
+        /** Ends this process. See [call]. */
+        const val METHOD_QUIT = "quit"
+
         const val KEY_ASSEMBLY = "assembly"
         const val KEY_ARGS = "args"
         const val KEY_CWD = "cwd"
@@ -59,6 +62,26 @@ class MonoProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
+        // Ends this process, whatever it is doing. The launcher asks for this
+        // when a previous run's process is still here and the next run needs
+        // one of its own -- a process only ever hosts a single run, so a
+        // straggler is in the way and nothing here can talk it down. Reaching
+        // it is never in doubt: the request only makes sense for a process
+        // that exists, and this call arriving is the proof that it does.
+        //
+        // The kill is on another thread with a moment's delay because the
+        // caller is blocked on a binder reply, and a process that has already
+        // died does not send one. Losing that race is survivable -- the
+        // launcher reads a dead provider as the process being gone, which is
+        // what it asked for -- but there is no reason to lose it.
+        if (method == METHOD_QUIT) {
+            thread(name = "mono-quit") {
+                Thread.sleep(100)
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
+            return null
+        }
+
         if (method != METHOD_RUN || extras == null) return null
 
         val assembly = extras.getString(KEY_ASSEMBLY)
