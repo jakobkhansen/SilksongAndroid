@@ -41,6 +41,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Bundle
 import android.os.RemoteException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -152,8 +153,21 @@ object MonoRuntime {
         // gigabytes held. Killing the process is the only lever there is --
         // the run is a thread in another process, and nothing about a
         // provider offers to interrupt it.
-        val onCancel = coroutineContext[Job]?.invokeOnCompletion { cause ->
-            if (cause != null) runCatching { killBuilder(context) }
+        //
+        // Left registered for the life of the job rather than disposed on the
+        // way out. Disposing in the finally below looks tidy and cannot work:
+        // that block runs as cancellation unwinds, which is before this job
+        // completes, so the handler was always removed a moment before the
+        // only event that would have fired it.
+        //
+        // Cancellation only. Any other ending leaves the process alone,
+        // because killBuilder is package-wide and takes every process of this
+        // app that is not in the foreground -- :launcher among them, which is
+        // where the build is being run from. A step that failed is not a
+        // reason to end a build the user is still waiting on; a cancelled one
+        // is already over.
+        coroutineContext[Job]?.invokeOnCompletion { cause ->
+            if (cause is CancellationException) runCatching { killBuilder(context) }
         }
         try {
             startRun(context, request)
@@ -232,7 +246,6 @@ object MonoRuntime {
                 onLine(carry.toString())
             }
         } finally {
-            onCancel?.dispose()
             out.delete()
             // Read before this, so deleting here rather than after the read
             // is what keeps a cancelled run from leaving one behind.
