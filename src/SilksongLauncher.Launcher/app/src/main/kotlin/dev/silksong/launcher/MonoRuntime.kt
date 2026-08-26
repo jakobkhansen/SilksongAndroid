@@ -40,6 +40,7 @@ package dev.silksong.launcher
 import android.app.ActivityManager
 import android.content.Context
 import android.os.Bundle
+import android.os.RemoteException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -155,11 +156,7 @@ object MonoRuntime {
             if (cause != null) runCatching { killBuilder(context) }
         }
         try {
-            // A binder call into :builder, which creates that process if it
-            // is not there. Deliberately not startService: an app in the
-            // background is not allowed to start one, and a build outlives
-            // the user's attention.
-            context.contentResolver.call(MonoProvider.uri(context), MonoProvider.METHOD_RUN, null, request)
+            startRun(context, request)
 
             // Tail. Reading stops one pass *after* the result file appears,
             // not as soon as it does: the last of the output may still have
@@ -259,18 +256,118 @@ object MonoRuntime {
     private const val MAX_CAPTURED = 1 shl 20
 
     /**
-     * True while the :builder process exists.
+     * Starts the run in :builder, which is the part that can be refused.
+     *
+     * A binder call into the provider is what creates that process.
+     * Deliberately not startService: an app in the background is not allowed
+     * to start one, and a build outlives the user's attention. But acquiring a
+     * provider is not the certainty it looks like -- ContentResolver.call
+     * throws "Unknown authority" for every reason the activity manager has to
+     * hand back nothing, and a build asks for this twenty times over tens of
+     * minutes with a process death between each.
+     *
+     * Two of those reasons are ours to avoid, and both come from the same
+     * fact: a run ends by killing its own process, and the activity manager
+     * only learns of it when binder reports the death. Until it does, the
+     * record for the provider still names a process that is gone, and a call
+     * arriving in that window is answered with nothing rather than with a new
+     * process. So the previous process is waited out first, and a refusal is
+     * retried rather than ending the build -- one lost race is not a reason to
+     * throw away an hour of conversion. See issue #4, where the third of three
+     * runs was made in the same second as the second one's death.
+     *
+     * The client is deliberately the unstable kind. The platform kills
+     * processes that hold a *stable* reference to a provider whose process
+     * dies, which is precisely what this one does after every run; unstable
+     * says "expected", leaves the launcher alone, and lets the activity
+     * manager drop the connection itself.
+     */
+    private suspend fun startRun(context: Context, request: Bundle) {
+        var refusal = "no reason given"
+        for (attempt in 1..START_ATTEMPTS) {
+            awaitBuilderGone(context)
+            val client = runCatching {
+                context.contentResolver.acquireUnstableContentProviderClient(MonoProvider.uri(context))
+            }.getOrNull()
+            if (client != null) {
+                try {
+                    client.call(MonoProvider.METHOD_RUN, null, request)
+                    return
+                } catch (e: RemoteException) {
+                    // The process was there and went away between acquiring it
+                    // and asking it to run.
+                    refusal = e.toString()
+                } finally {
+                    runCatching { client.close() }
+                }
+            } else {
+                refusal = "the activity manager would not start it"
+            }
+            LauncherLog.log("mono: $BUILDER_PROCESS did not start, attempt $attempt of $START_ATTEMPTS ($refusal)")
+            if (attempt < START_ATTEMPTS) delay(START_RETRY_MS * attempt)
+        }
+        throw IOException(
+            "the build process could not be started: $refusal. " +
+                "Close the app from the recents screen and start the build again -- " +
+                "it carries on from where it stopped.",
+        )
+    }
+
+    /**
+     * Waits for the previous run's process to actually be gone.
+     *
+     * One process hosts one run, and the next one cannot be started until the
+     * last has been reaped: see [startRun]. Normally this returns at once --
+     * the launcher stops reading when the result file appears, which is a
+     * moment before the process ends, so there is a fraction of a second to
+     * wait for and no more.
+     *
+     * A process that outstays that is not this run's and is not going to
+     * become it, so it is killed. Leaving it would fail differently and worse:
+     * the provider would be acquired, the run refused by the process already
+     * using it, and the build would blame the compiler.
+     */
+    private suspend fun awaitBuilderGone(context: Context) {
+        if (waitBuilderGone(context)) return
+        LauncherLog.log("mono: $BUILDER_PROCESS is still up from an earlier run; ending it")
+        killBuilder(context)
+        waitBuilderGone(context)
+    }
+
+    /** True if the process is gone before [BUILDER_EXIT_WAIT_MS] is up. */
+    private suspend fun waitBuilderGone(context: Context): Boolean {
+        val deadline = System.currentTimeMillis() + BUILDER_EXIT_WAIT_MS
+        while (builderRunning(context) == true) {
+            if (System.currentTimeMillis() >= deadline) return false
+            delay(50)
+        }
+        return true
+    }
+
+    /**
+     * Whether the :builder process exists, or null when that cannot be told.
      *
      * getRunningAppProcesses has been useless for looking at other apps since
      * Android 5, and that is not what this is for: an app can still see its
-     * own processes, which is exactly the question here.
+     * own processes, which is exactly the question here. It can still answer
+     * nothing at all, though, and the two callers want opposite things from
+     * that -- so the uncertainty is returned rather than resolved here.
      */
-    private fun builderAlive(context: Context): Boolean {
-        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return true
+    private fun builderRunning(context: Context): Boolean? {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return null
         return runCatching {
-            am.runningAppProcesses?.any { it.processName.endsWith(BUILDER_PROCESS) } == true
-        }.getOrDefault(true)
+            am.runningAppProcesses?.any { it.processName.endsWith(BUILDER_PROCESS) }
+        }.getOrNull()
     }
+
+    /**
+     * True while the :builder process exists.
+     *
+     * Unknown counts as alive: this decides whether a run that has gone quiet
+     * is dead, and a device that will not answer the question is no reason to
+     * declare it.
+     */
+    private fun builderAlive(context: Context): Boolean = builderRunning(context) ?: true
 
     /**
      * Ends the :builder process, whatever it is doing.
@@ -293,10 +390,34 @@ object MonoRuntime {
     /**
      * How long :builder is allowed to not exist before it counts as dead.
      *
-     * Only has to cover the gap between startService returning and the
+     * Only has to cover the gap between the run being asked for and the
      * process appearing, which is a process fork; a second is generous.
      */
     private const val STARTUP_GRACE_MS = 4_000L
+
+    /**
+     * How many times a refused start is asked for again.
+     *
+     * The thing being waited out is a binder death reaching the activity
+     * manager, which is tens of milliseconds; the rest is for a device with
+     * nothing to spare, since a build is the busiest this phone has been all
+     * week. Four attempts spread over three seconds is nothing against a
+     * conversion that takes half an hour, and a fifth would not tell us
+     * anything a fourth did not: past this, the refusal is not a race and
+     * only the app being restarted will clear it.
+     */
+    private const val START_ATTEMPTS = 4
+    private const val START_RETRY_MS = 500L
+
+    /**
+     * How long the previous run's process is given to disappear.
+     *
+     * Killing itself is the last thing it does and it is a signal, so this is
+     * normally over in a fraction of a second. The bound is here for the
+     * process that will not go, and it is what that costs before it is killed
+     * -- once per run, so it is deliberately short.
+     */
+    private const val BUILDER_EXIT_WAIT_MS = 3_000L
 
     /**
      * How much of [b] decodes as whole UTF-8 characters.
