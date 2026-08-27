@@ -141,7 +141,7 @@ object Toolchain {
             lines.firstOrNull(pick)?.let { return it }
             val last = lines.lastOrNull()
             return when {
-                code != MonoService.FAILED -> last ?: "exit $code"
+                code != MonoService.FAILED -> last ?: "exit $code, and no output at all"
                 last != null -> "no result from the build process, after \"$last\""
                 else -> "no result from the build process"
             }

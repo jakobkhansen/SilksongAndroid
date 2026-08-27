@@ -730,7 +730,14 @@ object PlayerImage {
         return null
     }
 
-    /** Native plugin file names under the data directory, two levels down. */
+    /**
+     * Native plugin file names under the data directory, two levels down.
+     *
+     * Two levels and no recursion, because that is where they are --
+     * Plugins/x86_64 -- and because this is asked on the main thread while
+     * someone waits for a folder they picked to be accepted. [depotData] has
+     * already walked more of the tree than this by the time it is called.
+     */
     private fun nativePlugins(data: File): List<String> {
         val top = File(data, "Plugins").listFiles().orEmpty().toList()
         val below = top.filter { it.isDirectory }.flatMap { it.listFiles().orEmpty().asList() }
