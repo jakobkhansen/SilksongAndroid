@@ -271,9 +271,9 @@ object Il2cppConverter {
                         "try again -- ${MonoRuntime.memory(context)}.",
                 )
             }
-            val why = result.output.lineSequence()
-                .firstOrNull { it.contains("rror", true) || it.contains("xception", true) }
-                ?: "exit ${result.code}"
+            val why = result.why {
+                it.contains("rror", true) || it.contains("xception", true)
+            }
             throw IOException("il2cpp failed after ${seconds}s: ${why.trim().take(300)}")
         }
         if (metadata(root).length() <= 0) {

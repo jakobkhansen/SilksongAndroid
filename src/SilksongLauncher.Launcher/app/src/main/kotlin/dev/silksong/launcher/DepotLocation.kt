@@ -284,6 +284,7 @@ object DepotLocation {
                 "What has to be in the folder is \"Hollow Knight Silksong_Data\" and " +
                 "everything beside it, from the game's Linux files."
         }
+        PlayerImage.wrongPlatform(dir)?.let { return it }
         if (!isWritable(contentDir(dir) ?: dir)) {
             return "that folder cannot be written to, and the game's content has to be " +
                 "converted in place. Some devices keep memory cards read-only for apps; " +

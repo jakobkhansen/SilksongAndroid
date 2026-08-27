@@ -112,6 +112,40 @@ object Toolchain {
      */
     data class Result(val code: Int, val output: String, val outOfMemory: Boolean = false) {
         val ok: Boolean get() = code == 0
+
+        /**
+         * Why this failed, in one line, for someone who will read it on a
+         * phone and then paste it into an issue.
+         *
+         * [pick] finds the line a failing program leaves behind -- "error CS"
+         * for a compiler, "error:" for clang. What matters here is what
+         * happens when nothing matches, because the runs that fail without a
+         * diagnostic are exactly the ones nobody can account for afterwards.
+         *
+         * Everything this side of the run writes plain English: monojni says
+         * "the runtime failed to start", the launcher says "the build process
+         * crashed", and neither contains the word "error". Filtering for that
+         * word threw all of it away and left a bare number, and a bare number
+         * is what came back to us -- "il2cpp failed after 5s: exit 120", from
+         * a device we do not have, with the account of what happened sitting
+         * in the log a line above. So what the run last said is used when
+         * nothing matches, which is the death note when there is one: that
+         * line is appended to the output for this.
+         *
+         * 120 is not a code any program chose. It is what the launcher
+         * records for a run that ended without leaving one, so it is said in
+         * words rather than printed as if il2cpp had returned it.
+         */
+        fun why(pick: (String) -> Boolean): String {
+            val lines = output.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }
+            lines.firstOrNull(pick)?.let { return it }
+            val last = lines.lastOrNull()
+            return when {
+                code != MonoService.FAILED -> last ?: "exit $code"
+                last != null -> "no result from the build process, after \"$last\""
+                else -> "no result from the build process"
+            }
+        }
     }
 
     /**

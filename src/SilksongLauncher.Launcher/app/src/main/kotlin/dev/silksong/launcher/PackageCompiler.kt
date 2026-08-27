@@ -177,7 +177,7 @@ object PackageCompiler {
             val errors = result.output.lineSequence().filter { it.contains("error CS") }.toList()
             throw IOException(
                 "the patches did not compile (${errors.size} errors): " +
-                    (errors.firstOrNull() ?: "exit ${result.code}").trim().take(300),
+                    result.why { it.contains("error CS") }.trim().take(300),
             )
         }
         LauncherLog.log("SilksongPatches.dll: ${out.length()} bytes from ${cs.size} sources")
@@ -360,7 +360,7 @@ object PackageCompiler {
             val errors = result.output.lineSequence().filter { it.contains("error CS") }.toList()
             throw IOException(
                 "the Input System did not compile (${errors.size} errors): " +
-                    (errors.firstOrNull() ?: "exit ${result.code}").trim().take(300),
+                    result.why { it.contains("error CS") }.trim().take(300),
             )
         }
         LauncherLog.log("Unity.InputSystem.dll: ${out.length()} bytes from ${cs.size} sources")

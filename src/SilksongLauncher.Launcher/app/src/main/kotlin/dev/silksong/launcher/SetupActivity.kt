@@ -858,6 +858,10 @@ class SetupActivity : Activity() {
                 if (PlayerImage.depotData(depot) == null) {
                     throw java.io.IOException("the game's files are not on this device")
                 }
+                // Not only at the picker: a depot copied into the app's own
+                // folder is used without ever having been picked, and the
+                // wrong one gets this far and then fails inside il2cpp.
+                PlayerImage.wrongPlatform(depot)?.let { throw java.io.IOException(it) }
 
                 // ── Step 3: building ──────────────────────────────────────
                 setStep(buildStep, "Building Silksong")

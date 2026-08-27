@@ -157,10 +157,7 @@ object NativeBuild {
 
             val out = output(root)
             if (!result.ok || out.length() <= 0) {
-                val why = result.output.lineSequence()
-                    .firstOrNull { it.contains("error:") }
-                    ?: result.output.trim().lines().lastOrNull()
-                    ?: "exit ${result.code}"
+                val why = result.why { it.contains("error:") }
                 throw IOException("the compile failed after ${seconds}s: ${why.trim().take(300)}")
             }
             LauncherLog.log("libil2cpp.so: ${out.length()} bytes in ${seconds}s")

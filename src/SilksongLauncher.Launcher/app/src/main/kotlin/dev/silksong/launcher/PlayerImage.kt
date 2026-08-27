@@ -678,7 +678,63 @@ object PlayerImage {
         !depot.isDirectory -> "that folder does not exist yet"
         depot.listFiles().orEmpty().isEmpty() -> "that folder is empty"
         partialDataDir(depot) != null -> "a data folder is there, but the copy did not finish"
-        else -> "no game data in it"
+        else -> depotPlatform(depot)?.let { "those are the $it files" } ?: "no game data in it"
+    }
+
+    /**
+     * Why this depot cannot be built from, when it is the wrong platform's.
+     *
+     * The depot is found by looking for globalgamemanagers, and every desktop
+     * build of the game has one -- so the Windows depot is accepted as
+     * readily as the Linux one, and then fails four minutes later inside
+     * il2cpp with nothing on the screen that mentions the depot at all. It is
+     * an easy mistake to make: the ids differ by two digits, and the folder a
+     * downloader leaves behind is named after the one that was asked for.
+     *
+     * Only ever a positive identification. Linux evidence settles it first,
+     * so a folder that has both (both depots downloaded side by side) is
+     * still built; a copy that has none of these files -- someone who
+     * brought the data directory across on its own -- is left alone rather
+     * than refused on a guess.
+     */
+    fun wrongPlatform(depot: File): String? {
+        val platform = depotPlatform(depot) ?: return null
+        return "those are the game's $platform files. The port is built from the Linux " +
+            "depot (1030303) -- see the README, or sign in with Steam and let the app " +
+            "fetch it."
+    }
+
+    /** Which desktop build [depot] is, when it is not the Linux one. */
+    private fun depotPlatform(depot: File): String? {
+        val data = depotData(depot) ?: return null
+        val beside = data.parentFile
+        val mono = File(data, "MonoBleedingEdge")
+        // The player library sits beside the data directory, the Mono runtime
+        // inside it, and the native plugins below that: three places, because
+        // which of them a person copied is up to them.
+        fun besideIs(name: String) = beside != null && File(beside, name).isFile
+        val plugins = nativePlugins(data)
+
+        if (besideIs("UnityPlayer.so") || File(mono, "x86_64").isDirectory ||
+            plugins.any { it.endsWith(".so") }
+        ) return null
+
+        if (besideIs("UnityPlayer.dll") || File(mono, "EmbedRuntime").isDirectory ||
+            plugins.any { it.endsWith(".dll") }
+        ) return "Windows"
+
+        if (besideIs("UnityPlayer.dylib") ||
+            plugins.any { it.endsWith(".dylib") || it.endsWith(".bundle") }
+        ) return "macOS"
+
+        return null
+    }
+
+    /** Native plugin file names under the data directory, two levels down. */
+    private fun nativePlugins(data: File): List<String> {
+        val top = File(data, "Plugins").listFiles().orEmpty().toList()
+        val below = top.filter { it.isDirectory }.flatMap { it.listFiles().orEmpty().asList() }
+        return (top + below).filter { it.isFile }.map { it.name.lowercase() }
     }
 
     /** A directory named like the game's data, but without the file that counts. */
