@@ -460,8 +460,21 @@ namespace BepInEx.Configuration
         readonly Dictionary<ConfigDefinition, ConfigEntryBase> _entries =
             new Dictionary<ConfigDefinition, ConfigEntryBase>();
 
-        /// <summary>Values read from disk that no plugin has claimed yet.</summary>
+        /// <summary>
+        /// Values read from disk that no plugin has claimed yet.
+        ///
+        /// They have to survive a save, and that is not a detail. A plugin
+        /// that binds a setting only in certain circumstances -- one per save
+        /// slot, say -- has every OTHER slot's value sitting here unclaimed,
+        /// and a save that dropped them would quietly destroy the settings for
+        /// every save the player is not currently in.
+        /// </summary>
         readonly Dictionary<ConfigDefinition, string> _orphans = new Dictionary<ConfigDefinition, string>();
+
+        public Dictionary<ConfigDefinition, string> OrphanedEntries
+        {
+            get { lock (_lock) return new Dictionary<ConfigDefinition, string>(_orphans); }
+        }
 
         readonly object _lock = new object();
 
@@ -734,21 +747,46 @@ namespace BepInEx.Configuration
                         builder.Append('\n');
                     }
 
-                    foreach (var section in _entries.Keys.Select(k => k.Section).Distinct().OrderBy(s => s, StringComparer.Ordinal))
+                    // Bound entries and orphans together, in one pass, exactly
+                    // as BepInEx writes them: an orphan is an ordinary line in
+                    // its own section, indistinguishable from a bound one.
+                    //
+                    // It used to be written as "# Section.Key = Value" after
+                    // everything else, which looked like a tidy way to keep a
+                    // value nobody had claimed. It was not: Reload skips lines
+                    // beginning with #, so every unclaimed value was destroyed
+                    // by the first save after it was read. A plugin that binds
+                    // its settings per save slot -- which is a real thing that
+                    // real plugins do -- had the settings for every slot but
+                    // the open one silently erased.
+                    var lines = new List<KeyValuePair<ConfigDefinition, ConfigEntryBase>>(_entries);
+                    var orphaned = new Dictionary<ConfigDefinition, string>(_orphans);
+                    foreach (var orphan in orphaned)
+                        lines.Add(new KeyValuePair<ConfigDefinition, ConfigEntryBase>(orphan.Key, null));
+
+                    foreach (var section in lines.Select(e => e.Key.Section).Distinct()
+                        .OrderBy(s => s, StringComparer.Ordinal))
                     {
                         builder.Append('[').Append(section).Append(']').Append('\n').Append('\n');
 
-                        foreach (var pair in _entries.Where(e => e.Key.Section == section)
+                        foreach (var pair in lines.Where(e => e.Key.Section == section)
                             .OrderBy(e => e.Key.Key, StringComparer.Ordinal))
                         {
-                            pair.Value.WriteDescription(builder);
-                            builder.Append(pair.Key.Key).Append(" = ")
-                                .Append(pair.Value.GetSerializedValue()).Append('\n').Append('\n');
+                            string value;
+                            if (pair.Value != null)
+                            {
+                                pair.Value.WriteDescription(builder);
+                                value = pair.Value.GetSerializedValue();
+                            }
+                            else
+                            {
+                                // No description: nothing has claimed it, so
+                                // nothing knows its type or its default.
+                                value = orphaned[pair.Key];
+                            }
+                            builder.Append(pair.Key.Key).Append(" = ").Append(value).Append('\n').Append('\n');
                         }
                     }
-
-                    foreach (var orphan in _orphans.OrderBy(o => o.Key.Section, StringComparer.Ordinal))
-                        builder.Append("# ").Append(orphan.Key).Append(" = ").Append(orphan.Value).Append('\n');
 
                     File.WriteAllText(ConfigFilePath, builder.ToString());
                 }
