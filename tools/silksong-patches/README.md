@@ -57,6 +57,7 @@ property spelled differently in Team Cherry's fork, and a missing
 | `IntroSkipper` | optionally skip the studio logos and opening quote |
 | `AnimatorRebindFix` | rebind animators that load disabled, so they play |
 | `WormAnimatorFix` | the off-camera frozen sand worm in Blasted Steps |
+| `TrapProbe` | live on-device diagnosis for stuck props; off unless asked for |
 | `ShaderWarmup` | prewarm shader variants to cut first-encounter hitches |
 | `InventoryTouchInput` | touch control for the game's own inventory |
 | `PerfOverlay`, `ProfilerTopMarkers` | on-device performance readouts |

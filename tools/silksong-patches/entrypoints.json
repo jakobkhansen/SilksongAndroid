@@ -36,6 +36,7 @@
     { "className": "AnimatorRebindFix", "methodName": "Bootstrap", "loadTypes": 2 },
     { "className": "WormAnimatorFix", "methodName": "Bootstrap", "loadTypes": 2 },
     { "className": "ShaderWarmup", "methodName": "Bootstrap", "loadTypes": 0 },
-    { "className": "ProfilerTopMarkers", "methodName": "Bootstrap", "loadTypes": 2 }
+    { "className": "ProfilerTopMarkers", "methodName": "Bootstrap", "loadTypes": 2 },
+    { "className": "TrapProbe", "methodName": "Bootstrap", "loadTypes": 2 }
   ]
 }

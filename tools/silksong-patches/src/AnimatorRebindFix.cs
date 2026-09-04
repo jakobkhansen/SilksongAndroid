@@ -12,10 +12,21 @@
 // the animator is doing at the time, because the props divide into two populations
 // and only one of them was ever covered.
 //
-//   IDLE animators — component disabled, or on an inactive GameObject. A plain
+//   IDLE animators — component disabled AND on an inactive GameObject. A plain
 //   Rebind() is safe here: nothing is being displayed, so rebuilding the binding
 //   has no visible effect, and the prop plays correctly whenever the game gets
 //   round to enabling it.
+//
+//   POSED animators — component disabled but the GameObject is ACTIVE, i.e. the
+//   frozen pose is on screen. AnimatorControlSequence puts a great many of the
+//   game's props here: it enables the animator, Plays a state at t=0, waits one
+//   frame for the curves to apply, then disables the animator to freeze the
+//   result. With no curve bindings that one frame writes nothing, so the prop
+//   keeps its AUTHORED pose — and for the Slab's spear traps that pose is fully
+//   deployed, which is issue #19. A bare Rebind() rebuilds the binding and then
+//   never evaluates, so it repairs nothing and (being deduped) prevents any
+//   later pass from trying. These need the same capture-rebind-restore-sample
+//   treatment as the live ones.
 //
 //   LIVE animators — enabled AND on an active GameObject, from the moment the room
 //   loads, forever. The bellway toll machine is one of these, and it is why this
@@ -204,11 +215,16 @@ public class AnimatorRebindFix : MonoBehaviour
     static void RebindIdleAnimators()
     {
         var anims = Object.FindObjectsByType<Animator>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-        int idle = 0, live = 0;
+        int idle = 0, live = 0, posed = 0;
         for (int i = 0; i < anims.Length; i++)
         {
             var a = anims[i];
             if (a == null || a.runtimeAnimatorController == null) continue;
+
+            // Debug-only A/B switch (TrapProbe, issue #19). Off unless a knob
+            // file on the device asks for it, and checked BEFORE the dedupe so
+            // that turning it off again lets the sweep pick the animator up.
+            if (TrapProbe.SuppressAnimatorRebind) continue;
 
             bool isLive = a.enabled && a.gameObject.activeInHierarchy;
 
@@ -225,14 +241,48 @@ public class AnimatorRebindFix : MonoBehaviour
                 RebindPreservingState(a);
                 live++;
             }
+            else if (a.gameObject.activeInHierarchy)
+            {
+                // Component disabled, but the object is ON SCREEN. For this
+                // population the frozen pose IS the display, so a bare Rebind()
+                // -- which rebuilds the bindings and then never evaluates -- is
+                // not enough: the prop keeps whatever pose it was authored with.
+                //
+                // AnimatorControlSequence is the idiom that makes this matter,
+                // and it is all over the game's props:
+                //
+                //     animator.enabled = true;
+                //     animator.Play(stateName, 0, 0f);
+                //     yield return null;        // one frame to apply the curves
+                //     animator.enabled = false; // and freeze there
+                //
+                // On a bundle animator with no curve bindings that one frame
+                // writes nothing, so the prop is left in its authored pose
+                // forever -- which for the Slab's spear traps is fully deployed
+                // (issue #19). Measured on device before the fix:
+                //
+                //     anim=spikes enabled=False/True ctrl=spikes init=True
+                //     state[0] t=0 len=1.611 loop=False clip='Jail_spear_trap'
+                //
+                // The state the game asked for is right there and correct; only
+                // the pose was never written. So rebind and SAMPLE once, at the
+                // state and time the animator already holds, which writes
+                // exactly the pose the game intended and nothing else.
+                RebindPreservingState(a);
+                posed++;
+            }
             else
             {
+                // Nothing is displayed, and Animator.Update does not apply to an
+                // inactive GameObject anyway. Rebuilding the binding is all that
+                // is wanted; the prop plays correctly when it is next enabled.
                 a.Rebind();
                 idle++;
             }
         }
-        if (idle > 0 || live > 0)
-            Debug.Log("[AnimatorRebindFix] rebound " + idle + " idle + " + live + " live bundle animators");
+        if (idle > 0 || live > 0 || posed > 0)
+            Debug.Log("[AnimatorRebindFix] rebound " + idle + " idle + " + posed
+                      + " posed + " + live + " live bundle animators");
     }
 
     static bool IsTransitioning(Animator a)
