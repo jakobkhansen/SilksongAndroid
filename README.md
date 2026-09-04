@@ -18,7 +18,7 @@ Steam integration for game files and cloud saves.
 - **High performance**: Compiles to native arm64 via IL2CPP and uses Vulkan shaders
 - **Fully open source and legal**: Supply your own game files either manually or through Steam sign-in (the app downloads them for you)
 - **Compilation on device**: Just download the APK and supply the game files, porting happens on device (20–30 min on a Snapdragon 8 Gen 2)
-- **Mods**: BepInEx 5 plugins, woven into the game at build time (see [Mods](#mods))
+- **Mod support (beta)**: BepInEx 5 plugins, woven into the game at build time (see [Mod support](#modsupport))
 - **QoL settings**: Skip intro, set resolution, auto upload/download cloud saves etc.
 - **Any device**: Any Android device works, single screen as well. Android 13 only for now (Android 15 is not supported at the moment)
 
@@ -70,7 +70,7 @@ is never copied into the app: it is read from that folder every time you play, a
 app update that rebuilds the game reads it too. Deleting or moving the folder stops the
 game from starting. The app leaves a `SILKSONG-DO-NOT-DELETE.txt` in there saying so.
 
-## Mods
+## Mod support (beta)
 
 BepInEx 5 plugins work, with one catch: since the games compiles to C++ code to get
 maximum performance, mods need to be compiled too, so installing or removing a mod means
@@ -113,6 +113,20 @@ settings.
 It is not shipped with the app, and neither is BepInEx: mods are your files,
 downloaded by you, and the build that compiles them into the game happens on
 your device.
+
+### Tested mods
+
+Built and played on device. Links go to the page each was downloaded from.
+
+- [BepInEx 5 + Configuration Manager](https://www.nexusmods.com/hollowknightsilksong/mods/26) — (only needed for configuration menu)
+- [AutoMap](https://www.nexusmods.com/hollowknightsilksong/mods/31)
+- [SaveScopedConfig](https://www.nexusmods.com/hollowknightsilksong/mods/1123) — required by AutoMap
+- [Bonfire Teleport](https://www.nexusmods.com/hollowknightsilksong/mods/156) — (use top-screen full map to teleport)
+- [Stakes of Marika – Rebirth Anywhere](https://www.nexusmods.com/hollowknightsilksong/mods/46) — (partial, no custom spawnpoint)
+- [Healthbar & Damage Show](https://www.nexusmods.com/hollowknightsilksong/mods/28)
+
+If a mod is not working for you, feel free to open an issue, but I cannot guarantee that
+all mods will be supported.
 
 ## Steam Cloud Saves
 
