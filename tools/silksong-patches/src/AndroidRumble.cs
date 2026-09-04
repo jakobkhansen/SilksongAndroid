@@ -73,6 +73,7 @@ public class AndroidRumble : MonoBehaviour
 
     AndroidJavaObject _vibrator;
     AndroidJavaClass _effectClass;
+    AndroidJavaObject _attributes;
     bool _hasAmplitude;
     bool _dead;                 // JNI unavailable: stay quiet forever
 
@@ -85,6 +86,7 @@ public class AndroidRumble : MonoBehaviour
         try { Stop(); } catch (Exception) { }
         if (_vibrator != null) { _vibrator.Dispose(); _vibrator = null; }
         if (_effectClass != null) { _effectClass.Dispose(); _effectClass = null; }
+        if (_attributes != null) { _attributes.Dispose(); _attributes = null; }
     }
 
     // ─── the device ─────────────────────────────────────────────────────────
@@ -134,8 +136,10 @@ public class AndroidRumble : MonoBehaviour
             // better than silence, so we play on/off instead of giving up.
             _hasAmplitude = _vibrator.Call<bool>("hasAmplitudeControl");
             _effectClass = new AndroidJavaClass("android.os.VibrationEffect");
+            _attributes = BuildGameAttributes();
 
-            Debug.Log(Tag + "vibrator ready (sdk=" + sdk + " amplitudeControl=" + _hasAmplitude + ")");
+            Debug.Log(Tag + "vibrator ready (sdk=" + sdk + " amplitudeControl=" + _hasAmplitude
+                      + " gameAttributes=" + (_attributes != null) + ")");
             return true;
         }
         catch (Exception e)
@@ -231,6 +235,48 @@ public class AndroidRumble : MonoBehaviour
 
     bool _testedThisFlagSet;
 
+    // Say that this is a GAME rumble, not touch feedback.
+    //
+    // Vibrator.vibrate(effect) with no attributes is classified USAGE_UNKNOWN,
+    // which Android scales and gates with the "touch feedback" setting. That is
+    // the wrong bucket and it is not a theoretical problem: the first device
+    // this was tested on had haptic_feedback_enabled=0 and
+    // haptic_feedback_intensity=0 -- a very ordinary thing to switch off, since
+    // it is what makes the keyboard and the UI buzz -- and every call was
+    // silently dropped even though hasVibrator() and hasAmplitudeControl() both
+    // reported true.
+    //
+    // AudioAttributes.USAGE_GAME is mapped by the framework to
+    // VibrationAttributes.USAGE_MEDIA, so game rumble is governed as media
+    // rather than as touch feedback. The AudioAttributes overload is used rather
+    // than VibrationAttributes directly because it has been public API since 26,
+    // which is this APK's minSdk, while the VibrationAttributes overload is not.
+    //
+    // Constants are read from the framework rather than hardcoded so a value
+    // that ever differs cannot silently mean something else.
+    static AndroidJavaObject BuildGameAttributes()
+    {
+        try
+        {
+            using (var attrClass = new AndroidJavaClass("android.media.AudioAttributes"))
+            using (var builder = new AndroidJavaObject("android.media.AudioAttributes$Builder"))
+            {
+                int usageGame = attrClass.GetStatic<int>("USAGE_GAME");
+                int sonification = attrClass.GetStatic<int>("CONTENT_TYPE_SONIFICATION");
+                using (var withUsage = builder.Call<AndroidJavaObject>("setUsage", usageGame))
+                using (var withType = withUsage.Call<AndroidJavaObject>("setContentType", sonification))
+                    return withType.Call<AndroidJavaObject>("build");
+            }
+        }
+        catch (Exception e)
+        {
+            // Falling back to the single-argument vibrate is still better than
+            // no haptics; it just inherits the touch-feedback gating.
+            Debug.LogWarning(Tag + "could not build game vibration attributes: " + e.Message);
+            return null;
+        }
+    }
+
     void Play(float amplitude)
     {
         try
@@ -240,7 +286,8 @@ public class AndroidRumble : MonoBehaviour
             using (var effect = _effectClass.CallStatic<AndroidJavaObject>(
                        "createOneShot", EffectMs, _hasAmplitude ? amp : -1))
             {
-                _vibrator.Call("vibrate", effect);
+                if (_attributes != null) _vibrator.Call("vibrate", effect, _attributes);
+                else _vibrator.Call("vibrate", effect);
             }
             _playing = amplitude;
             if (Flag("log", false))
