@@ -363,6 +363,51 @@ object Mods {
     }
 
     /**
+     * The port's own weaves, over the staged assemblies.
+     *
+     * Separate from [weave] and unconditional, because these are not the
+     * user's mods: they ship with the port, there is no folder to look in, and
+     * the overwhelmingly common build has no plugins at all and would skip
+     * [weave] entirely. See the weaver's Builtin.cs for what they do.
+     *
+     * Never throws. A built-in weave that cannot be applied leaves the game
+     * exactly as Team Cherry shipped it, which is a game that works; failing a
+     * twenty-minute build over a frill would be the worse outcome by a wide
+     * margin, and the setting that depends on it says so at runtime instead.
+     */
+    suspend fun weaveBuiltin(
+        context: android.content.Context,
+        root: File,
+        assemblies: File,
+        assets: android.content.res.AssetManager,
+        onLine: (String) -> Unit = {},
+    ) {
+        try {
+            val weaver = stageWeaver(root, assets)
+            val argv = arrayListOf("builtin", "--assemblies", assemblies.absolutePath)
+            val result = MonoRuntime.exec(
+                context, weaver, argv, cwd = weaver.parentFile, onLine = onLine,
+            )
+            // Unconditionally, and that is the point: a weave that quietly did
+            // nothing and a weave that quietly worked look identical from the
+            // outside, and the setting that depends on this is the only thing
+            // that would eventually notice. One line either way is the whole
+            // difference between a fixable report and a mystery.
+            val said = result.output.trim().lines().filter { it.isNotBlank() }
+            if (said.isEmpty()) {
+                LauncherLog.log("builtin weave: exit ${result.code}, no output")
+            } else {
+                for (line in said) LauncherLog.log("builtin weave: $line")
+            }
+            if (!result.ok) {
+                LauncherLog.log("builtin weave: exit ${result.code}; stock behaviour kept")
+            }
+        } catch (t: Throwable) {
+            LauncherLog.log("builtin weave: skipped", t)
+        }
+    }
+
+    /**
      * Runs the chainloader over the staged assemblies.
      *
      * Every plugin in the folder, switched on or not: the gate the weaver

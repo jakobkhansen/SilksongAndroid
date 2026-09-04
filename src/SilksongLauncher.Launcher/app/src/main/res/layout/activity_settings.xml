@@ -120,6 +120,27 @@
         android:text="@string/settings_dual_screen_subtitle"
         android:textColor="@color/text_dim"
         android:textSize="12sp"
+        android:layout_marginBottom="16dp"
+        android:layout_marginStart="4dp" />
+
+    <!-- ───── Wide aspect ───── -->
+
+    <Switch
+        android:id="@+id/sw_wide_aspect"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/settings_wide_aspect"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="2dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/settings_wide_aspect_subtitle"
+        android:textColor="@color/text_dim"
+        android:textSize="12sp"
         android:layout_marginBottom="24dp"
         android:layout_marginStart="4dp" />
 

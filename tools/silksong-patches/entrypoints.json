@@ -28,6 +28,7 @@
     { "nameSpace": "SilksongPatches", "className": "InjectionProbe", "methodName": "AfterSceneLoad", "loadTypes": 0 },
 
     { "className": "ResolutionConfigurator", "methodName": "Apply", "loadTypes": 1 },
+    { "className": "AspectGate", "methodName": "Apply", "loadTypes": 1 },
     { "className": "IntroSkipper", "methodName": "Boot", "loadTypes": 0 },
     { "className": "PerfOverlay", "methodName": "Bootstrap", "loadTypes": 2 },
     { "className": "DualScreenV2", "methodName": "Bootstrap", "loadTypes": 0 },

@@ -47,6 +47,8 @@
     <string name="settings_back">Back</string>
     <string name="settings_dual_screen">Dual screen</string>
     <string name="settings_dual_screen_subtitle">Show the inventory, map, tasks, journal and crest on a second screen, with touch. Only does anything on a device that has two screens, such as the Ayn Thor.</string>
+    <string name="settings_wide_aspect">Unlock aspect ratio</string>
+    <string name="settings_wide_aspect_subtitle">Removes the black bars on screens that are not 16:9, but can lead to some strange visuals.</string>
 
     <!-- Login screen. -->
     <string name="login_title">Sign in to Steam</string>

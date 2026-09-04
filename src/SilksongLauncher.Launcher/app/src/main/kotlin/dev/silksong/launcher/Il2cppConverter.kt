@@ -253,6 +253,16 @@ object Il2cppConverter {
 
         redirectSaveCalls(context, root)
 
+        // The port's own weaves, before the user's and regardless of whether
+        // there are any: these ship with the build, so the empty mods folder
+        // that skips everything below still gets them.
+        if (assets != null) {
+            send(Progress("Patching the game", -1f, "built-in weaves"))
+            Mods.weaveBuiltin(context, root, asmDir(root), assets) { line ->
+                trySend(Progress("Patching the game", -1f, line.take(80)))
+            }
+        }
+
         // The chainloader, run here rather than at game startup: this is the
         // last moment the game exists as IL, so it is the only moment a
         // Harmony patch can be applied. Plugins are woven into the staged set

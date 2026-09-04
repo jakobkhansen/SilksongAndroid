@@ -26,18 +26,27 @@ namespace ModWeaver;
 //
 // usage:
 //   ModWeaver weave --assemblies <dir> --report <file.json> --mod <dll> ...
+//   ModWeaver builtin --assemblies <dir>
 //
 // <dir> is the staged assembly set il2cpp is about to be handed. Patched
 // assemblies are rewritten in place, and every plugin that survives is copied
 // in beside them.
+//
+// "builtin" is the port's own weaves rather than the user's -- see Builtin.cs.
+// It is a separate verb because it must run on every build, including the
+// overwhelmingly common one where the mods folder is empty, whereas "weave"
+// has nothing to do then.
 internal static class Program
 {
     static int Main(string[] args)
     {
+        if (args.Length >= 1 && args[0] == "builtin") return RunBuiltin(args);
+
         if (args.Length < 1 || args[0] != "weave")
         {
             Console.Error.WriteLine(
-                "usage: ModWeaver weave --assemblies <dir> --report <file.json> --mod <dll> [--mod <dll> ...]");
+                "usage: ModWeaver weave --assemblies <dir> --report <file.json> --mod <dll> [--mod <dll> ...]\n" +
+                "       ModWeaver builtin --assemblies <dir>");
             return 2;
         }
 
@@ -96,6 +105,50 @@ internal static class Program
             Console.Error.WriteLine($"mod-weaver failed: {e}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// The port's own weaves. See Builtin.cs.
+    ///
+    /// Always exits 0 for anything short of a broken command line: a built-in
+    /// weave that cannot be applied leaves stock behaviour, which is a working
+    /// game, and failing the build over a frill would be the worse outcome by
+    /// a wide margin.
+    /// </summary>
+    static int RunBuiltin(string[] args)
+    {
+        string? assemblies = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--assemblies":
+                    if (i + 1 >= args.Length)
+                    {
+                        Console.Error.WriteLine("--assemblies needs a value");
+                        return 2;
+                    }
+                    assemblies = args[++i];
+                    break;
+                default:
+                    Console.Error.WriteLine($"unknown argument: {args[i]}");
+                    return 2;
+            }
+        }
+
+        if (assemblies is null)
+        {
+            Console.Error.WriteLine("--assemblies is required");
+            return 2;
+        }
+        if (!Directory.Exists(assemblies))
+        {
+            Console.Error.WriteLine($"no such assembly directory: {assemblies}");
+            return 2;
+        }
+
+        foreach (var note in Builtin.Apply(assemblies)) Console.WriteLine(note);
+        return 0;
     }
 
     static void Write(string path, IReadOnlyList<PluginReport> results)

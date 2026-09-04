@@ -72,6 +72,30 @@ class SettingsStore(context: Context) {
         set(value) { prefs.edit().putBoolean(KEY_DUAL_SCREEN, value).apply() }
 
     /**
+     * Unlock the aspect ratio.
+     *
+     * Silksong clamps the shape it renders into to between 1.6 : 1 and
+     * 2.3916667 : 1 and letterboxes the rest, which never shows on a 16:9
+     * monitor and always shows on the screens Android actually has -- a
+     * foldable's inner screen is about 1.16 : 1, its cover screen about
+     * 2.46 : 1, and a 4:3 handheld 1.33 : 1. When this is on, the build's
+     * woven gate widens that range so the game renders at the screen's own
+     * proportions and the bars go away.
+     *
+     * Default OFF, and deliberately so: the same clamp drives the camera, so
+     * opening it also pulls the camera back and shows more of the world than
+     * the art was framed for. On a foldable that is a full screen; it can also
+     * look wrong. Only the player can make that trade.
+     *
+     * Costs a relaunch, not a rebuild -- the weave is always in the build and
+     * this only decides whether the gate is opened. Inert on an ordinary
+     * phone, whose aspect is already inside the game's own range.
+     */
+    var wideAspect: Boolean
+        get() = prefs.getBoolean(KEY_WIDE_ASPECT, false)
+        set(value) { prefs.edit().putBoolean(KEY_WIDE_ASPECT, value).apply() }
+
+    /**
      * Hands the game the settings it needs, as a file it can read.
      *
      * The launcher runs in its own process, so the game cannot read these
@@ -94,6 +118,7 @@ class SettingsStore(context: Context) {
             append(KEY_PERF_OVERLAY).append('=').append(perfOverlay).append('\n')
             append(KEY_SKIP_INTRO).append('=').append(skipIntro).append('\n')
             append(KEY_DUAL_SCREEN).append('=').append(dualScreen).append('\n')
+            append(KEY_WIDE_ASPECT).append('=').append(wideAspect).append('\n')
         }
         try {
             val out = File(dir, "game-settings.txt")
@@ -118,5 +143,6 @@ class SettingsStore(context: Context) {
         const val KEY_PERF_OVERLAY = "perf_overlay"
         const val KEY_SKIP_INTRO = "skip_intro"
         const val KEY_DUAL_SCREEN = "dualscreen_enabled"
+        const val KEY_WIDE_ASPECT = "wide_aspect"
     }
 }
