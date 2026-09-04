@@ -269,6 +269,14 @@ XML
     <uses-feature android:glEsVersion="0x00030002" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!--
+      Haptics. The game mixes vibration every frame and hands it to InControl,
+      whose UnityInputDevice.Vibrate is an empty method on Android, so
+      AndroidRumble plays it through the platform Vibrator instead, and that
+      needs this. A normal permission: granted at install, never prompted for,
+      and inert if the device has no actuator.
+    -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!--
       Ending a builder process when a build is cancelled goes down the
       binding now, but this is still what clears a straggler left by a run
       that would not stop. A normal permission: granted at install, never
