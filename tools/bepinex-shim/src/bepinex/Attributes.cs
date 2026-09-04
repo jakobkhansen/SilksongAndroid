@@ -64,13 +64,6 @@ namespace BepInEx
         }
     }
 
-    [Flags]
-    public enum DependencyFlags
-    {
-        HardDependency = 1,
-        SoftDependency = 2,
-    }
-
     /// <summary>
     /// Another plugin this one needs, or would like.
     ///
@@ -82,6 +75,21 @@ namespace BepInEx
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
     public class BepInDependency : Attribute
     {
+        /// <summary>
+        /// Nested, because that is where BepInEx puts it.
+        ///
+        /// A plugin naming this type was compiled against
+        /// BepInEx.BepInDependency/DependencyFlags, and a top-level
+        /// BepInEx.DependencyFlags is a different type with the same name --
+        /// which the plugin cannot resolve, however identical the members are.
+        /// </summary>
+        [Flags]
+        public enum DependencyFlags
+        {
+            HardDependency = 1,
+            SoftDependency = 2,
+        }
+
         public string DependencyGUID { get; protected set; }
         public DependencyFlags Flags { get; protected set; }
         public string MinimumVersion { get; protected set; }

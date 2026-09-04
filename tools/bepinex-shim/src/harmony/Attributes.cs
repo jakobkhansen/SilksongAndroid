@@ -67,12 +67,19 @@ namespace HarmonyLib
         public HarmonyPatch(Type declaringType, MethodType methodType) { info.declaringType = declaringType; info.methodType = methodType; }
         public HarmonyPatch(Type declaringType, MethodType methodType, params Type[] argumentTypes) { info.declaringType = declaringType; info.methodType = methodType; info.argumentTypes = argumentTypes; }
         public HarmonyPatch(Type declaringType, MethodType methodType, Type[] argumentTypes, ArgumentType[] argumentVariations) { info.declaringType = declaringType; info.methodType = methodType; info.argumentTypes = argumentTypes; }
+        // A named member reached as something other than a plain method:
+        // [HarmonyPatch(typeof(Hero), "Health", MethodType.Getter)]. The
+        // weaver reads the arguments by type rather than by overload, so it
+        // already understands this one -- but a plugin cannot be converted at
+        // all unless the constructor it was compiled against exists here.
+        public HarmonyPatch(Type declaringType, string methodName, MethodType methodType) { info.declaringType = declaringType; info.methodName = methodName; info.methodType = methodType; }
         public HarmonyPatch(string methodName) { info.methodName = methodName; }
         public HarmonyPatch(string methodName, params Type[] argumentTypes) { info.methodName = methodName; info.argumentTypes = argumentTypes; }
         public HarmonyPatch(string methodName, Type[] argumentTypes, ArgumentType[] argumentVariations) { info.methodName = methodName; info.argumentTypes = argumentTypes; }
         public HarmonyPatch(string methodName, MethodType methodType) { info.methodName = methodName; info.methodType = methodType; }
         public HarmonyPatch(MethodType methodType) { info.methodType = methodType; }
         public HarmonyPatch(MethodType methodType, params Type[] argumentTypes) { info.methodType = methodType; info.argumentTypes = argumentTypes; }
+        public HarmonyPatch(MethodType methodType, Type[] argumentTypes, ArgumentType[] argumentVariations) { info.methodType = methodType; info.argumentTypes = argumentTypes; }
         public HarmonyPatch(Type[] argumentTypes) { info.argumentTypes = argumentTypes; }
         public HarmonyPatch(Type[] argumentTypes, ArgumentType[] argumentVariations) { info.argumentTypes = argumentTypes; }
         public HarmonyPatch(string typeName, string methodName, MethodType methodType = MethodType.Normal) { info.declaringTypeName = typeName; info.methodName = methodName; info.methodType = methodType; }
