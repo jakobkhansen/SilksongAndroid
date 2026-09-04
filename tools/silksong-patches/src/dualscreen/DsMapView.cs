@@ -74,6 +74,7 @@ public class DsMapView
     float _mapUnitsPerPixel = 0.01f;
     float _nextAssert;
     float _nextCompass;
+    float _nextSweep;
     float _settleUntil;
     bool _forceAssert;
     bool _contentDark;
@@ -591,6 +592,33 @@ public class DsMapView
 
         // The set shrank under us. Only World cares: Area wants one zone anyway.
         if (Mode == Frame.World && _worldAreas > 0 && active < _worldAreas) _forceAssert = true;
+
+        // ...and the set can GROW without anything going dark.
+        //
+        // Every trigger above notices content DISAPPEARING: a scene load
+        // darkening the areas, or the game's own quick map narrowing the world
+        // view back to one zone. Nothing notices the opposite. Buying a map
+        // from Shakra -- or a mod unlocking a region -- adds a zone to the
+        // unlocked set, and what is already on screen stays exactly as lit as
+        // it was, so the count does not move and no re-assert is asked for. The
+        // panel then shows the set it last enabled until something else forces
+        // one, which in practice meant pressing L1: the game opens its own map,
+        // CloseQuickMap darkens the areas on the way out, and the dark detector
+        // above finally fires.
+        //
+        // A slow sweep, rather than a signal to watch, because there is no
+        // cheap one: what a player may map is spread across the save's map
+        // bools, the quill, and whatever a mod has decided today, and
+        // EnableUnlockedAreas is the only thing that knows how to read all of
+        // it. This goes through the ordinary guarded path -- it stands down
+        // while the game has a map up, it is rate-limited, and it backs off
+        // where there is nothing to enable -- so at this cadence it costs
+        // nothing measurable and cannot fight the main screen.
+        if (Time.unscaledTime >= _nextSweep)
+        {
+            _nextSweep = Time.unscaledTime + DsConfig.Int("map_sweep_ms", 2000) / 1000f;
+            _forceAssert = true;
+        }
 
         // Housekeeping, on its own slow tick: keep the compass on Hornet.
         if (Time.unscaledTime >= _nextCompass)
