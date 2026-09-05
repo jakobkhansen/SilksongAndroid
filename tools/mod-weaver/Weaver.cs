@@ -319,13 +319,20 @@ internal sealed class Weaver
         var classSpec = Merge(type.CustomAttributes);
         var classPatched = type.CustomAttributes.Any(a => a.AttributeType.Name == "HarmonyPatch");
 
-        if (type.CustomAttributes.Any(a =>
-                a.AttributeType.Name is "HarmonyTargetMethod" or "HarmonyTargetMethods") ||
-            type.Methods.Any(m => m.CustomAttributes.Any(a =>
-                a.AttributeType.Name is "HarmonyTargetMethod" or "HarmonyTargetMethods")))
+        // A class that chooses its own target, by attribute or by the bare
+        // name Harmony also accepts. Most of these are a constant expression
+        // and are read here rather than refused -- see TargetMethods for why
+        // that is worth doing and where it stops.
+        var chooser = TargetMethods.Find(type);
+        if (chooser is not null)
         {
-            report.Note($"{type.Name} picks its targets at runtime, which a build-time weaver cannot follow");
-            return;
+            var chosen = TargetMethods.Read(chooser);
+            if (chosen is null)
+            {
+                report.Note($"{type.Name} picks its targets at runtime, which a build-time weaver cannot follow");
+                return;
+            }
+            classSpec = classSpec.MergedWith(chosen);
         }
 
         var prefixes = new Dictionary<MethodDefinition, List<MethodDefinition>>();
@@ -333,6 +340,7 @@ internal sealed class Weaver
 
         foreach (var method in type.Methods)
         {
+            if (method == chooser) continue;
             var kind = KindOf(method, classPatched);
             switch (kind)
             {
@@ -344,7 +352,14 @@ internal sealed class Weaver
             }
 
             var spec = classSpec.MergedWith(Merge(method.CustomAttributes));
-            if (spec.IsEmpty) continue;
+            if (spec.IsEmpty)
+            {
+                // Nothing said which method this patches, here or on the
+                // class. Silence was the old answer and it read as success:
+                // the plugin was reported "Ok" with nothing woven at all.
+                report.Note($"{type.Name}.{method.Name} does not say which method it patches");
+                continue;
+            }
 
             var target = spec.Resolve(FindType, out var why);
             if (target is null)
