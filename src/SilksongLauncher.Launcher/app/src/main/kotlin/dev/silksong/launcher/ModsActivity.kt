@@ -253,7 +253,10 @@ class ModsActivity : Activity() {
      */
     private fun rebuild() {
         try {
-            startActivity(Intent(this, SetupActivity::class.java))
+            startActivity(
+                Intent(this, SetupActivity::class.java)
+                    .putExtra(SetupActivity.EXTRA_REBUILD, true),
+            )
             finish()
         } catch (t: Throwable) {
             Toast.makeText(this, "Could not open the build screen: ${t.message}", Toast.LENGTH_LONG).show()

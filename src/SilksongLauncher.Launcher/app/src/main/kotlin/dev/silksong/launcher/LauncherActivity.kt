@@ -526,7 +526,10 @@ class LauncherActivity : Activity() {
                     "Rebuild now, or play the build you already have?",
             )
             .setPositiveButton("Rebuild") { _, _ ->
-                startActivity(Intent(this, SetupActivity::class.java))
+                startActivity(
+                    Intent(this, SetupActivity::class.java)
+                        .putExtra(SetupActivity.EXTRA_REBUILD, true),
+                )
                 finish()
             }
             .setNegativeButton("Play anyway") { _, _ -> continueLaunch() }

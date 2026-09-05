@@ -200,7 +200,10 @@ object Mods {
             } else {
                 try {
                     update(path.toByteArray())
-                    assets.open(path).use { updateFrom(it) }
+                    // Normalised, for the reason AssetDigest gives: the weaver
+                    // ships a .deps.json beside its DLL, and a CRLF checkout of
+                    // it made every mod look stale on a Windows-built launcher.
+                    AssetDigest.update(this, assets, path)
                 } catch (_: IOException) {
                 }
             }

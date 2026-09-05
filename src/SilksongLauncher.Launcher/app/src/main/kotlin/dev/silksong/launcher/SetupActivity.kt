@@ -57,7 +57,20 @@ import java.io.File
 
 class SetupActivity : Activity() {
 
-    private companion object {
+    companion object {
+        /**
+         * "Rebuild now", decided on the screen that sent us here.
+         *
+         * Without it this screen is opened to build a game that is, by every
+         * measure it has, already built -- and forwards straight back to the
+         * launcher. From the Mods screen that is indistinguishable from the
+         * button doing nothing at all, which is exactly what it was reported
+         * as. The mods folder is not part of [builtMarker] on purpose: it is
+         * not what the build was made by, it is what the build was made FROM,
+         * and it is checked separately by [modsPending].
+         */
+        const val EXTRA_REBUILD = "dev.silksong.launcher.extra.REBUILD"
+
         // Where setup hands off to. The launcher is the app's home screen --
         // Steam login, cloud saves, and the button that starts the game; this
         // screen exists only to get the device to the point where that screen
@@ -138,6 +151,14 @@ class SetupActivity : Activity() {
             withContext(Dispatchers.IO) { Toolchain.canExecute(Toolchain.rootFor(this@SetupActivity)) }
             if (!busy) refresh()
         }
+        // The rebuild was already agreed to on the screen that sent us here,
+        // so it starts rather than being put behind another button. Only on a
+        // first creation: a rotation is not a second press.
+        if (savedInstanceState == null && intent?.getBooleanExtra(EXTRA_REBUILD, false) == true) {
+            intent.removeExtra(EXTRA_REBUILD)
+            LauncherLog.log("setup: rebuilding on request")
+            startPort()
+        }
     }
 
     override fun onResume() {
@@ -151,7 +172,11 @@ class SetupActivity : Activity() {
             return
         }
         refresh()
-        if (isBuilt()) startLauncher()
+        // A finished build made from a mods folder that has since changed is
+        // not somewhere to send anybody: forwarding would put the launcher
+        // back up with the new mod still not in the game, and the Rebuild
+        // button that led here would have visibly done nothing.
+        if (isBuilt() && !modsPending()) startLauncher()
     }
 
     // ── what state are we in ───────────────────────────────────────────────
@@ -184,13 +209,17 @@ class SetupActivity : Activity() {
      * changes on every install, so editing a settings screen would throw away
      * a good build and charge the user twenty minutes to get an identical one
      * back.
+     *
+     * Contents only, and normalised: see AssetDigest. A file staged with CRLF
+     * compiles to the same game as the same file staged with LF, so hashing
+     * the difference only ever produced a rebuild nobody needed.
      */
     private val buildSignature: String by lazy {
         val md = java.security.MessageDigest.getInstance("SHA-256")
         fun walk(path: String) {
             val names = runCatching { assets.list(path) }.getOrNull().orEmpty().sorted()
             if (names.isEmpty()) {
-                runCatching { assets.open(path).use { md.update(it.readBytes()) } }
+                runCatching { AssetDigest.update(md, assets, path) }
                 return
             }
             for (n in names) walk("$path/$n")
@@ -219,6 +248,33 @@ class SetupActivity : Activity() {
         depotDir?.let {
             PlayerImage.depotData(it) != null && PlayerImage.foreignBuild(it) == null
         } == true
+
+    /**
+     * A finished build, made from a different mods folder than the one on disk
+     * now.
+     *
+     * Deliberately not part of [isBuilt]. What that answers is "is there a
+     * game to play", and there is: a mod that has not been compiled in yet
+     * costs the mod, not the build. What this answers is "is it the game the
+     * mods folder describes", which is the only question a rebuild request is
+     * asking -- and the two have to be separate, or every mods folder edit
+     * would put the app back to a screen offering to port Silksong.
+     *
+     * The folder's contents only, never the switches: a toggle is applied at
+     * startup by the gate the weaver wove around each patch, so it is already
+     * true of the build that exists. [LauncherActivity] asks this same
+     * question before launching and has to get the same answer, or the two
+     * screens send each other in a circle.
+     */
+    private fun modsPending(): Boolean = try {
+        val out = Il2cppConverter.rootFor(this)
+        Il2cppConverter.isPresent(out) && Mods.isStale(Mods.dir(this), out, assets)
+    } catch (t: Throwable) {
+        // A folder that cannot be read is not a reason to withhold a build
+        // that works.
+        LauncherLog.log("Could not check the mods folder: $t")
+        false
+    }
 
     /**
      * The wrong platform's copy, and where it is, or null when there is none.
@@ -403,6 +459,23 @@ class SetupActivity : Activity() {
         val foreign = wrongBuild()
 
         when {
+            // Ahead of the plain built case, and the only state where this
+            // screen has something to say about a game that is finished: the
+            // build is real and playable, it simply is not the one the mods
+            // folder now describes.
+            built && modsPending() -> {
+                status.text = message ?: "Mods waiting to be built in"
+                detail.text =
+                    "The mods folder has changed since the game was last built. Mods are " +
+                    "compiled into the game rather than loaded by it, so the change is not " +
+                    "in there yet.\n\n" +
+                    "Rebuilding takes several minutes rather than the half hour the first " +
+                    "build took: only what actually changed is done again."
+                primary.text = "Rebuild"
+                primary.visibility = View.VISIBLE
+                secondary.text = "Play anyway"
+                secondary.visibility = View.VISIBLE
+            }
             built -> {
                 status.text = message ?: "Ready to play."
                 detail.text = ""
@@ -527,6 +600,10 @@ class SetupActivity : Activity() {
 
     private fun onPrimary() {
         when {
+            // Before the built case, not after it: this is the one state where
+            // "there is a build" is true and starting the game with it is
+            // still the wrong thing for this screen to do.
+            isBuilt() && modsPending() -> startPort()
             isBuilt() -> startLauncher()
             readyToPort || haveGameFiles() -> startPort()
             else -> onSteamClicked()
@@ -552,6 +629,13 @@ class SetupActivity : Activity() {
      * works. Nobody who already copied the game there has to do anything.
      */
     private fun onSecondary() {
+        // "Play anyway", which is the only thing this button is when a build
+        // exists: the folder picker is never offered beside one, because the
+        // depot is part of isBuilt.
+        if (isBuilt()) {
+            startLauncher()
+            return
+        }
         refresh()
         if (haveGameFiles()) return
         for (dir in depotDirs) LauncherLog.log("depot $dir: ${PlayerImage.depotProblem(dir)}")

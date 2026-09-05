@@ -18,3 +18,19 @@ Makefile      text eol=lf
 *.yaml        text eol=lf
 *.yml         text eol=lf
 gradlew       text eol=lf
+
+# Force LF on everything that is copied verbatim into the APK.
+#
+# The stage* tasks in app/build.gradle.kts put these in assets/ondevice/, and
+# SetupActivity.buildSignature hashes the CONTENTS of that tree to decide
+# whether the game already built on a device is still the one this app would
+# produce. A CRLF checkout therefore ships bytes that differ from the same
+# commit on Linux for no reason the device can act on, and installing a
+# launcher built on Windows silently discarded a finished 20-30 minute port:
+# 46 of the 64 staged assets differed, every one of them by line endings alone.
+#
+# AssetDigest normalises line endings back out when hashing, so this is the
+# belt to that pair of braces -- but the bytes should not differ in the first
+# place, and a .cs staged with CRLF is nobody's intention.
+*.cs          text eol=lf
+*.json        text eol=lf
