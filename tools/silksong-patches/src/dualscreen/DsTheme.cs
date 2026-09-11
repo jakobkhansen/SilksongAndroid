@@ -59,7 +59,7 @@ public static class DsTheme
     // The panel is ~9 cm across and held at arm's length on a handheld, so
     // everything is larger than a desktop UI would be: a 200 px cell is about
     // 14 mm, which is comfortably above the ~9 mm minimum for a touch target.
-    public const float TabBarHeight = 88f;
+    public const float TabBarHeight = DsLayout.TabHeight;
     public const float FooterHeight = 200f;
     public const float Pad          = 20f;
     public const float RuleThickness = 2f;

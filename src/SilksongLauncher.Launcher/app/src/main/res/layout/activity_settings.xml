@@ -123,6 +123,26 @@
         android:layout_marginBottom="16dp"
         android:layout_marginStart="4dp" />
 
+    <Switch
+        android:id="@+id/sw_show_top_hud"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/settings_show_top_hud"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="2dp"
+        android:layout_marginStart="16dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/settings_show_top_hud_subtitle"
+        android:textColor="@color/text_dim"
+        android:textSize="12sp"
+        android:layout_marginBottom="16dp"
+        android:layout_marginStart="20dp" />
+
     <!-- ───── Wide aspect ───── -->
 
     <Switch

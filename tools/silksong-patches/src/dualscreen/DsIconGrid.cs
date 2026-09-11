@@ -132,7 +132,6 @@ public class DsIconGrid
 
     public string EmptyMessage = "Nothing here yet";
 
-    /// <param name="hostTop">Where the host rect starts, in layout space.</param>
     /// <param name="left">Left edge of the grid column, in layout space.</param>
     /// <param name="width">Width of the grid column.</param>
     /// <param name="detail">
@@ -142,16 +141,16 @@ public class DsIconGrid
     /// THAT instead, so the grid can run the full height of the panel and no
     /// column is left with a hole in it.
     /// </param>
-    public void Build(RectTransform host, int columns, float hostTop,
+    public void Build(RectTransform host, int columns,
                       float left = -1f, float width = -1f, Rect detail = default(Rect))
     {
         _columns = Mathf.Max(1, columns);
 
-        float panelW = DsPresentation.PanelW > 0 ? DsPresentation.PanelW : 1240f;
-        float panelH = DsPresentation.PanelH > 0 ? DsPresentation.PanelH : 1080f;
+        var layout = DsLayout.Current;
+        float panelW = layout.Width;
         if (left < 0f) left = DsTheme.Pad;
         if (width < 0f) width = panelW - DsTheme.Pad * 2f;
-        float h = panelH - hostTop;
+        float h = layout.Body.height;
 
         bool detailBelow = detail.width <= 0f;
         if (detailBelow)
@@ -161,7 +160,7 @@ public class DsIconGrid
         _cell = (width - _gap * (_columns - 1)) / _columns;
 
         _gridLeft = left;
-        _gridTop = hostTop + DsTheme.Pad;
+        _gridTop = layout.Body.y + DsTheme.Pad;
         _gridW = width;
         _gridH = (detailBelow ? h - DsTheme.FooterHeight : h) - DsTheme.Pad * 2f;
 
@@ -461,17 +460,7 @@ public class DsIconGrid
     static Image Corner(RectTransform parent, string name, Sprite sprite, Vector2 anchor,
                         bool rotate, float inset)
     {
-        var img = DsWidgets.Icon(parent, name, sprite, Color.white);
-        var rt = img.rectTransform;
-        rt.anchorMin = rt.anchorMax = anchor;
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.sizeDelta = new Vector2(CornerSize, CornerSize);
-        rt.anchoredPosition = new Vector2((anchor.x < 0.5f ? inset : -inset),
-                                          (anchor.y < 0.5f ? inset : -inset));
-        if (rotate) rt.localRotation = Quaternion.Euler(0f, 0f, 180f);
-        img.preserveAspect = true;
-        img.gameObject.SetActive(false);
-        return img;
+        return DsWidgets.CursorCorner(parent, name, sprite, anchor, rotate, CornerSize, inset);
     }
 
     static void SetSprite(Image img, Sprite s)
@@ -525,7 +514,7 @@ public class DsIconGrid
             case DsGestureType.Drag:
                 // Panel y is up, so dragging the finger up scrolls further down
                 // the list. Only when the finger is over this grid.
-                if (p.x >= _gridLeft && p.x <= _gridLeft + _gridW)
+                if (new Rect(_gridLeft, _gridTop, _gridW, _gridH).Contains(p))
                 {
                     _scroll = Mathf.Clamp(_scroll + g.Delta.y, 0f, _maxScroll);
                     Paint();
@@ -554,6 +543,7 @@ public class DsIconGrid
     // maps a corner tap to the middle of the grid.
     int HitTest(Vector2 layoutPoint)
     {
+        if (!new Rect(_gridLeft, _gridTop, _gridW, _gridH).Contains(layoutPoint)) return -1;
         float x = layoutPoint.x - _gridLeft;
         float y = layoutPoint.y - _gridTop + _scroll;
         if (x < 0f || x > _gridW) return -1;

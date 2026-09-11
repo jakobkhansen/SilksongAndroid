@@ -11,8 +11,13 @@
     <Compile Include="Program.cs" />
     <Compile Include="..\src\dualscreen\DsInput.cs" Link="DsInput.cs" />
     <Compile Include="..\src\dualscreen\DsTouch.cs" Link="DsTouch.cs" />
+    <Compile Include="..\src\dualscreen\DsLayout.cs" Link="DsLayout.cs" />
+    <Compile Include="..\src\dualscreen\DsHudRouting.cs" Link="DsHudRouting.cs" />
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(Player)\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(Player)\UnityEngine.UIModule.dll</HintPath>
     </Reference>
     <Reference Include="UnityEngine.InputLegacyModule">
       <HintPath>$(Player)\UnityEngine.InputLegacyModule.dll</HintPath>

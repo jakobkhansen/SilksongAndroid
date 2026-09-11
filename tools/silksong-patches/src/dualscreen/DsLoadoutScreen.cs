@@ -44,13 +44,14 @@ public class DsLoadoutScreen : IDsScreen
     const float ListX = 756f;
     const float ListW = 464f;
     const int   ListColumns = 3;
-    const float CrestH = 620f;
+    const float PreferredCrestH = 620f;
     const float SlotIcon = 82f;
     const float ExtraIcon = 74f;
 
     RectTransform _crestBox, _host;
     Image _crestImage;
     TmpText _crestName;
+    float _crestH;
 
     readonly DsIconGrid _grid = new DsIconGrid();
     readonly List<Image> _slots = new List<Image>();
@@ -71,13 +72,14 @@ public class DsLoadoutScreen : IDsScreen
     public void Build(RectTransform host)
     {
         _host = host;
-        float bodyTop = DsTheme.TabBarHeight;
+        float bodyH = DsLayout.Current.Body.height;
+        _crestH = Mathf.Min(PreferredCrestH, bodyH * 0.64f);
 
         // ── left: the crest ────────────────────────────────────────────────
         // No box. The crest is divided from the tool list by the rule down the
         // gutter, and from its own description by the rule the grid draws.
         _crestBox = DsWidgets.Rect(host, "crest");
-        DsWidgets.Place(_crestBox, LeftX, 16f, LeftW, CrestH);
+        DsWidgets.Place(_crestBox, LeftX, 16f, LeftW, _crestH);
 
         // The body face: crest names are mixed case ("Hunter Crest").
         _crestName = DsWidgets.Label(_crestBox, "crest-name", "", DsTheme.TitleSize,
@@ -91,13 +93,12 @@ public class DsLoadoutScreen : IDsScreen
         // The grid runs the full height of the panel and puts its detail pane
         // under the CREST instead of under itself, so the space beneath the
         // crest is used and neither column has a hole in it.
-        float bodyH = (DsPresentation.PanelH > 0 ? DsPresentation.PanelH : 1080f) - bodyTop;
-        float detailY = 16f + CrestH + 16f;
+        float detailY = 16f + _crestH + 16f;
 
         // Down the gutter between the crest column and the tools.
         DsWidgets.VRule(host, "split", (LeftX + LeftW + ListX) * 0.5f, 16f, bodyH - 36f);
 
-        _grid.Build(host, ListColumns, bodyTop, ListX, ListW,
+        _grid.Build(host, ListColumns, ListX, ListW,
                     new Rect(LeftX, detailY, LeftW, bodyH - detailY - 20f));
 
         Refresh(force: true);
@@ -235,7 +236,7 @@ public class DsLoadoutScreen : IDsScreen
         float ringX = 20f;
         float ringY = 96f;
         float ringW = LeftW - 40f;
-        float ringH = CrestH - ringY - 24f;
+        float ringH = _crestH - ringY - 24f;
         float cx = ringX + ringW * 0.5f;
         float cy = ringY + ringH * 0.5f;
 
@@ -318,7 +319,7 @@ public class DsLoadoutScreen : IDsScreen
 
             AddSlot(x, y, ExtraIcon, DsTheme.ToolTypeColor(tool.Type), tool);
             y += ExtraIcon + 14f;
-            if (y > CrestH - ExtraIcon) break;
+            if (y > _crestH - ExtraIcon) break;
         }
     }
 
@@ -448,7 +449,7 @@ public class DsLoadoutScreen : IDsScreen
         Vector2 p = DsPresentation.ToLayout(g.Position);
         if (p.x >= ListX) return;
 
-        float bodyTop = DsTheme.TabBarHeight;
+        float bodyTop = DsLayout.Current.Body.y;
         for (int i = 0; i < _slotRects.Count; i++)
         {
             var rt = _slotRects[i];

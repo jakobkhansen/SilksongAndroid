@@ -121,30 +121,20 @@ public class DualScreenV2 : MonoBehaviour
 
     void BuildShell()
     {
-        _shell = new DsShell(_screen.Root, _screen.Width, _screen.Height);
+        _shell = new DsShell(_screen.Root);
         RegisterScreens(_shell);
         _shell.Finish(DsConfig.Str("screen", "map"));
+        _shell.SetVisible(_screen.Ready && !_paused);
     }
 
-    // One place, so the rebuild-on-font-found path cannot drift from startup.
-    //
-    // Map first, and the default. It is the screen you want while actually
-    // playing -- the others answer questions you ask at a bench -- so it is
-    // what the panel should be showing when you have not asked for anything.
-    //
-    // It was originally last, on the reasoning that the one screen with a
-    // render rig behind it should fail on a tab you had to choose rather than
-    // the one you land on. That was the right call while the rig was unproven;
-    // it now works, and the shell disables a screen that throws without taking
-    // the others down, so the risk it was hedging against costs a tab rather
-    // than the panel.
+    // Native icon order; the preferred screen remains Map.
     static void RegisterScreens(DsShell shell)
     {
-        shell.Register(new DsMapScreen());
-        shell.Register(new DsInventoryScreen());
-        shell.Register(new DsLoadoutScreen());
-        shell.Register(new DsTasksScreen());
-        shell.Register(new DsJournalScreen());
+        shell.Register(new DsInventoryScreen(), InventoryPaneList.PaneTypes.Inv);
+        shell.Register(new DsLoadoutScreen(), InventoryPaneList.PaneTypes.Tools);
+        shell.Register(new DsTasksScreen(), InventoryPaneList.PaneTypes.Quests);
+        shell.Register(new DsJournalScreen(), InventoryPaneList.PaneTypes.Journal);
+        shell.Register(new DsMapScreen(), InventoryPaneList.PaneTypes.Map);
     }
 
     void Update()
@@ -166,6 +156,12 @@ public class DualScreenV2 : MonoBehaviour
 
         if (_card != null) { _card.Tick(); return; }
         if (_shell == null) return;
+
+        if (_shell.LayoutChanged)
+        {
+            if (_input != null) { _input.Cancel(); DispatchGestures(); }
+            RebuildShell();
+        }
 
         DsProbe.MaybeRun();
 
@@ -219,13 +215,15 @@ public class DualScreenV2 : MonoBehaviour
     {
         string keep = _shell != null ? _shell.ActiveId : null;
         ClearRoot();
-        _shell = new DsShell(_screen.Root, _screen.Width, _screen.Height);
+        _shell = new DsShell(_screen.Root);
         RegisterScreens(_shell);
         _shell.Finish(keep ?? DsConfig.Str("screen", "map"));
+        _shell.SetVisible(_screen.Ready && !_paused);
     }
 
     void ClearRoot()
     {
+        if (_shell != null) { _shell.Dispose(); _shell = null; }
         var root = _screen.Root;
         for (int i = root.childCount - 1; i >= 0; i--) Destroy(root.GetChild(i).gameObject);
     }
@@ -276,15 +274,16 @@ public class DualScreenV2 : MonoBehaviour
 
     void SetActive(bool on)
     {
-        if (_screen != null)
-        {
-            if (on) _screen.SetVisible(true);
-            else _screen.Suspend();
-        }
         if (!on && _input != null)
         {
             _input.Cancel();
             DispatchGestures();
+        }
+        if (_shell != null) _shell.SetVisible(on);
+        if (_screen != null)
+        {
+            if (on) _screen.SetVisible(true);
+            else _screen.Suspend();
         }
     }
 
@@ -306,6 +305,7 @@ public class DualScreenV2 : MonoBehaviour
         Instance = null;
         try { Display.onDisplaysUpdated -= OnDisplaysUpdated; } catch { }
         DsTouch.Stop();
+        if (_shell != null) { _shell.Dispose(); _shell = null; }
         if (_screen != null) { _screen.Destroy(); _screen = null; }
         _card = null;
     }

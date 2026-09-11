@@ -44,7 +44,8 @@ public class DsPresentation
 
     // Layers 3 and 6 are unnamed in the game's TagManager, so 6 is ours. The
     // game renders its HUD and menus on layer 5 ("UI") and its world on the
-    // rest; nothing of the game's is ever moved here.
+    // rest; nothing of the game's is ever moved here. DsHudView separately
+    // borrows layer 3 only within individual camera render callbacks.
     public const int LAYER = 6;
 
     public Camera Camera { get; private set; }
@@ -56,12 +57,15 @@ public class DsPresentation
     public int Height { get; private set; }
 
     /// <summary>
-    /// The authored layout size. Pointer positions use these units, not raw
-    /// Android pixels or the main screen's render resolution.
+    /// The input bridge's reference size, latched at bringup. The canvas may
+    /// have different logical dimensions; frame geometry uses LayoutSize.
     /// </summary>
     public static int PanelW { get; private set; }
     public static int PanelH { get; private set; }
     static RectTransform _uiRoot;
+
+    public static Vector2 LayoutSize => _uiRoot != null ? _uiRoot.rect.size
+        : new Vector2(PanelW > 0 ? PanelW : 1240, PanelH > 0 ? PanelH : 1080);
 
     public static Vector2 FromSurface(Vector2 normalized)
     {

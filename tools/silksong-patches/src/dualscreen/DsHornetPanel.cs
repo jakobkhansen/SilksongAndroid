@@ -52,6 +52,7 @@ public class DsHornetPanel
     readonly List<Slot> _skills = new List<Slot>();
 
     float _x, _y, _w, _h;
+    float _artScale = 1f, _artX;
     float _ringCx, _ringCy, _ringR;
     bool _built;
     string _saveKey;
@@ -120,6 +121,17 @@ public class DsHornetPanel
         // boundary saying the same thing.
         _panel = DsWidgets.Rect(host, "hornet");
         DsWidgets.Place(_panel, x, y, w, h);
+
+        // Fit the existing composition rather than crushing the skill ring
+        // into the smaller space left by the shared HUD and bottom tabs.
+        float artHeight = Mathf.Max(h, 762f);
+        _artScale = h / artHeight;
+        _artX = (w - w * _artScale) * 0.5f;
+        var art = DsWidgets.Rect(_panel, "art");
+        DsWidgets.Place(art, _artX, 0f, w, artHeight);
+        art.localScale = new Vector3(_artScale, _artScale, 1f);
+        _panel = art;
+        h = artHeight;
 
         _needle = MakeSlot("needle", 12f, 34f, NeedleW, h - 170f);
 
@@ -365,17 +377,12 @@ public class DsHornetPanel
             if (s.Root == null || s.Images.Count == 0) continue;
             if (string.IsNullOrEmpty(s.Name) && string.IsNullOrEmpty(s.Desc)) continue;
 
-            // Layout space is measured from the top of the PANEL, but this
-            // panel's own rect is measured from the top of the screen's BODY,
-            // which starts below the tab strip. Leaving that out shifted every
-            // hitbox up by the height of the tabs, so only the top edge of an
-            // icon responded.
             _hits.Add(new Hit
             {
-                X = _x + s.Root.anchoredPosition.x,
-                Y = DsTheme.TabBarHeight + _y - s.Root.anchoredPosition.y,
-                W = s.Root.sizeDelta.x,
-                H = s.Root.sizeDelta.y,
+                X = _x + _artX + s.Root.anchoredPosition.x * _artScale,
+                Y = DsLayout.Current.Body.y + _y - s.Root.anchoredPosition.y * _artScale,
+                W = s.Root.sizeDelta.x * _artScale,
+                H = s.Root.sizeDelta.y * _artScale,
                 Name = s.Name,
                 Desc = s.Desc,
             });

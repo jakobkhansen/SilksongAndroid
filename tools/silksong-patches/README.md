@@ -49,7 +49,7 @@ has already caught a `ReadSource` value that does not exist, a TextMeshPro
 property spelled differently in Team Cherry's fork, and a missing
 `TeamCherry.TK2D` reference.
 
-For the dual-screen input regressions:
+For the dual-screen layout, HUD routing and input regressions:
 
 ```powershell
 pwsh tools\silksong-patches\test.ps1
@@ -57,8 +57,10 @@ pwsh tools\silksong-patches\test.ps1
 
 This runs the real gesture recognizer and coordinate mapping against Unity's
 managed types, plus the Android touch buffer on the JVM. It covers scaled and
-inset surfaces, tab hit coordinates, fast taps, cancellation, pinch, flings,
-resize/background resets, and queue overflow. It needs the player module, an
+inset surfaces, bottom-tab hit coordinates, header/body/footer isolation, HUD
+framing, render-scope restoration (including failure paths), fast taps,
+cancellation, pinch, flings, resize/background resets, and queue overflow.
+It needs the player module, an
 Android SDK and a JDK, but not a game depot or a running Unity player.
 
 ## What is here
@@ -78,7 +80,7 @@ Android SDK and a JDK, but not a game depot or a running Unity player.
 | `PerfOverlay`, `ProfilerTopMarkers` | on-device performance readouts |
 | `InjectionProbe` | proves the assembly is live, and logs the settings it sees |
 | `Settings` | reads the launcher's settings file |
-| `dualscreen/` | the second screen — see `DUALSCREEN-V2.md` |
+| `dualscreen/` | the second screen — see `docs/DUALSCREEN-V2.md` and the first visual slice in `docs/DUALSCREEN-V3.md` |
 
 ## Editing them
 

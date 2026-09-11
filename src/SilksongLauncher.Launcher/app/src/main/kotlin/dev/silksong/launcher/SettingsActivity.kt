@@ -38,6 +38,7 @@ class SettingsActivity : Activity() {
     private lateinit var swPerfOverlay: Switch
     private lateinit var swSkipIntro: Switch
     private lateinit var swDualScreen: Switch
+    private lateinit var swShowTopHud: Switch
     private lateinit var swWideAspect: Switch
     private lateinit var btnClearBuild: Button
 
@@ -51,6 +52,7 @@ class SettingsActivity : Activity() {
         swPerfOverlay = findViewById(R.id.sw_perf_overlay)
         swSkipIntro = findViewById(R.id.sw_skip_intro)
         swDualScreen = findViewById(R.id.sw_dual_screen)
+        swShowTopHud = findViewById(R.id.sw_show_top_hud)
         swWideAspect = findViewById(R.id.sw_wide_aspect)
 
         val btnBack: Button = findViewById(R.id.btn_settings_back)
@@ -60,6 +62,8 @@ class SettingsActivity : Activity() {
         swPerfOverlay.isChecked = settings.perfOverlay
         swSkipIntro.isChecked = settings.skipIntro
         swDualScreen.isChecked = settings.dualScreen
+        swShowTopHud.isChecked = settings.showTopHud
+        swShowTopHud.isEnabled = swDualScreen.isChecked
         swWideAspect.isChecked = settings.wideAspect
 
         // Persist on every toggle — no separate Save button; the
@@ -86,7 +90,12 @@ class SettingsActivity : Activity() {
         }
         swDualScreen.setOnCheckedChangeListener { _, checked ->
             settings.dualScreen = checked
+            swShowTopHud.isEnabled = checked
             LauncherLog.log("Settings: dual screen → $checked (next game launch; requires DualScreen build)")
+        }
+        swShowTopHud.setOnCheckedChangeListener { _, checked ->
+            settings.showTopHud = checked
+            LauncherLog.log("Settings: show health HUD on top screen → $checked (takes effect on next game launch)")
         }
         swWideAspect.setOnCheckedChangeListener { _, checked ->
             settings.wideAspect = checked

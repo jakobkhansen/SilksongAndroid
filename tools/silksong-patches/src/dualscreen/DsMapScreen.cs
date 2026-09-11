@@ -74,9 +74,9 @@ public class DsMapScreen : IDsScreen
     {
         _host = host;
 
-        float panelW = DsPresentation.PanelW > 0 ? DsPresentation.PanelW : 1240f;
-        float panelH = DsPresentation.PanelH > 0 ? DsPresentation.PanelH : 1080f;
-        float bodyH = panelH - DsTheme.TabBarHeight;
+        var layout = DsLayout.Current;
+        float panelW = layout.Width;
+        float bodyH = layout.Body.height;
 
         float x = DsTheme.Pad;
         float y = HeaderH;
@@ -86,7 +86,7 @@ public class DsMapScreen : IDsScreen
         // Kept in panel space too, because gestures arrive in panel pixels and
         // converting the rect once is cheaper and clearer than converting every
         // drag.
-        _mapRect = new Rect(x, DsTheme.TabBarHeight + y, w, h);
+        _mapRect = layout.InBody(new Rect(x, y, w, h));
 
         // The body face. This label holds a zone NAME, which is mixed case, and
         // the display face is caps-only -- see the rule in DsWidgets.Label.
@@ -102,7 +102,7 @@ public class DsMapScreen : IDsScreen
         // player hits by accident while dragging.
         _button = DsWidgets.Panel(host, "fullmap", DsTheme.Panel, DsTheme.PanelEdge);
         DsWidgets.Place(_button, x + w - ButtonW, 8f, ButtonW, ButtonH);
-        _buttonRect = new Rect(x + w - ButtonW, DsTheme.TabBarHeight + 8f, ButtonW, ButtonH);
+        _buttonRect = layout.InBody(new Rect(x + w - ButtonW, 8f, ButtonW, ButtonH));
 
         _buttonLabel = DsWidgets.Label(_button, "fullmap-label", "FULL MAP", DsTheme.BodySize,
                                        DsTheme.Ink, TmpAlign.Center, display: true);
@@ -113,7 +113,7 @@ public class DsMapScreen : IDsScreen
         float resetX = x + w - ButtonW - 16f - ResetW;
         _reset = DsWidgets.Panel(host, "reset", DsTheme.Panel, DsTheme.PanelEdge);
         DsWidgets.Place(_reset, resetX, 8f, ResetW, ButtonH);
-        _resetRect = new Rect(resetX, DsTheme.TabBarHeight + 8f, ResetW, ButtonH);
+        _resetRect = layout.InBody(new Rect(resetX, 8f, ResetW, ButtonH));
 
         var resetLabel = DsWidgets.Label(_reset, "reset-label", "RESET", DsTheme.BodySize,
                                          DsTheme.InkDim, TmpAlign.Center, display: true);

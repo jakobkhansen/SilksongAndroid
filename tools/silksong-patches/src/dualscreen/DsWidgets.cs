@@ -226,6 +226,26 @@ public static class DsWidgets
         rt.offsetMax = new Vector2(-pad, -pad);
     }
 
+    public static Image CursorCorner(RectTransform parent, string name, Sprite sprite,
+                                     Vector2 anchor, bool rotate, float size, float inset)
+    {
+        var img = Icon(parent, name, sprite, Color.white);
+        var rt = img.rectTransform;
+        rt.anchorMin = rt.anchorMax = anchor;
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = new Vector2(size, size);
+        rt.anchoredPosition = new Vector2(anchor.x < 0.5f ? inset : -inset,
+                                          anchor.y < 0.5f ? inset : -inset);
+        if (rotate) rt.localRotation = Quaternion.Euler(0f, 0f, 180f);
+        img.gameObject.SetActive(false);
+        return img;
+    }
+
+    public static void Place(RectTransform rt, UnityEngine.Rect bounds)
+    {
+        Place(rt, bounds.x, bounds.y, bounds.width, bounds.height);
+    }
+
     /// <summary>Place a rect by top-left corner, in panel pixels with y down.</summary>
     public static void Place(RectTransform rt, float x, float y, float w, float h)
     {

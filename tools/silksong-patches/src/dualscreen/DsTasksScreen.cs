@@ -136,13 +136,13 @@ public class DsTasksScreen : IDsScreen
     {
         _host = host;
 
-        float panelW = DsPresentation.PanelW > 0 ? DsPresentation.PanelW : 1240f;
-        float panelH = DsPresentation.PanelH > 0 ? DsPresentation.PanelH : 1080f;
-        float bodyH = panelH - DsTheme.TabBarHeight;
+        var layout = DsLayout.Current;
+        float panelW = layout.Width;
+        float bodyH = layout.Body.height;
 
         _listTop = Pad;
         _listH = bodyH - Pad * 2f;
-        _listRect = new Rect(ListX, DsTheme.TabBarHeight + _listTop, ListW, _listH);
+        _listRect = layout.InBody(new Rect(ListX, _listTop, ListW, _listH));
 
         _list = DsWidgets.Rect(host, "list");
         DsWidgets.Place(_list, ListX, _listTop, ListW, _listH);

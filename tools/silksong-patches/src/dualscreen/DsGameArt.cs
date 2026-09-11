@@ -60,12 +60,15 @@ public static class DsGameArt
     const BindingFlags Priv = BindingFlags.NonPublic | BindingFlags.Instance;
 
     static Transform _inventory;
+    static float _nextInventorySearch;
 
     static Transform Inventory
     {
         get
         {
             if (_inventory != null) return _inventory;
+            if (Time.unscaledTime < _nextInventorySearch) return null;
+            _nextInventorySearch = Time.unscaledTime + 1f;
             try
             {
                 var lists = Resources.FindObjectsOfTypeAll<InventoryPaneList>();
@@ -73,13 +76,25 @@ public static class DsGameArt
                     if (lists[i] != null && lists[i].gameObject.scene.IsValid())
                     { _inventory = lists[i].transform; break; }
             }
-            catch { }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[DsGameArt] inventory lookup failed: " + e.Message);
+            }
             return _inventory;
         }
     }
 
     /// <summary>Drop cached references — the scene changed, or the save did.</summary>
-    public static void Forget() { _inventory = null; _cursor = null; }
+    public static void Forget() { _inventory = null; _cursor = null; _nextInventorySearch = 0f; }
+
+    public static Sprite TabIcon(InventoryPaneList.PaneTypes type)
+    {
+        var root = Inventory;
+        if (root == null) return null;
+        var list = root.GetComponent<InventoryPaneList>();
+        var pane = list != null ? list.GetPane(type) : null;
+        return pane != null ? pane.ListIcon : null;
+    }
 
     // ── the widgets ─────────────────────────────────────────────────────────
 

@@ -25,10 +25,10 @@ public interface IDsScreen
     /// <summary>Stable identifier, used for persistence. Not shown.</summary>
     string Id { get; }
 
-    /// <summary>Shown in the tab strip. Localised where the game gives us a string.</summary>
+    /// <summary>Fallback label while the native tab icon is unavailable.</summary>
     string Title { get; }
 
-    /// <summary>False hides the tab entirely — e.g. a map in a zone with no map.</summary>
+    /// <summary>Eligibility for Next navigation. Native unlock filtering is deferred.</summary>
     bool Available { get; }
 
     /// <summary>Build the UI under <paramref name="host"/>. Called once.</summary>

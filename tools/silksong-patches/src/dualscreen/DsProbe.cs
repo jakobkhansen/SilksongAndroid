@@ -27,6 +27,7 @@
 // asked for.
 
 #if UNITY_ANDROID && !UNITY_EDITOR
+using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
 using UnityEngine;
@@ -34,6 +35,14 @@ using UnityEngine;
 public static class DsProbe
 {
     static bool _done;
+
+    public static void DumpHud(IList<Transform> roots)
+    {
+        Debug.Log("[DsProbe] === native health/silk render roots ===");
+        for (int i = 0; i < roots.Count; i++)
+            if (roots[i] != null) Walk(roots[i], 0);
+        Debug.Log("[DsProbe] === end health/silk ===");
+    }
 
     public static void MaybeRun()
     {
@@ -94,6 +103,14 @@ public static class DsProbe
         if (sr != null)
             sb.Append("  [SpriteRenderer sprite=")
               .Append(sr.sprite != null ? sr.sprite.name : "null").Append(']');
+
+        var tk = t.GetComponent<tk2dSprite>();
+        if (tk != null)
+            sb.Append("  [tk2d sprite=").Append(tk.CurrentSprite != null ? tk.CurrentSprite.name : "null").Append(']');
+        var renderer = t.GetComponent<Renderer>();
+        if (renderer != null)
+            sb.Append("  [layer=").Append(t.gameObject.layer).Append(" enabled=").Append(renderer.enabled)
+              .Append(" bounds=").Append(renderer.bounds).Append(']');
 
         // What a PlayerDataTestResponse is actually testing, and its answer.
         // Several widgets are gated by these, and "which objects should be
