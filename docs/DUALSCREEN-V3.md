@@ -28,12 +28,20 @@ the existing caret sprites marks the selected tab. Until native icons load,
 their text labels remain usable; missing art is logged and retried. This does
 not open the game's inventory or mark its items as seen.
 
-The health header renders the live masks, crest/bind frame and silk spool into
-a small GPU render texture. It also includes their crest-change and over-blue
-HUD effects, but not the currency counters or tool icons. Native objects stay
-in place and their controllers remain active. Renderer layers change only
-between a camera's pre-cull and post-render callbacks, then are restored; they
-are not changed during native updates or slot creation. Layer 3 is reserved
+The health header renders the live masks, crest/bind frame, silk spool and
+equipped tool/skill icons into a small GPU render texture. It also includes
+their crest-change and over-blue HUD effects, but not the currency counters.
+Tool charge rings are native world-space uGUI canvases. Their canvas roots and
+graphics are routed before canvas batching in LateUpdate, held across every
+camera render, and restored at frame end. Per-camera layer changes work for
+sprites but are too late for the already-built UI batches. Primary camera masks
+include the ring layer when showing the top HUD or falling back to it. The
+capture uses the header's bottom padding as well, fitting the complete rings
+without shrinking the 55-pixel health spacing or changing the content area.
+Native objects stay in place and their controllers remain active. Sprite
+renderer layers change between a camera's pre-cull and post-render callbacks;
+canvas layers are restored after rendering. Native updates and slot creation
+see the original layers. Layer 3 is reserved
 for this capture, separate from the second-screen UI's layer 6. If it is already
 in use when binding, capture is refused and the normal HUD is retained.
 

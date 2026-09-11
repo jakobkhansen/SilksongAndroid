@@ -72,7 +72,7 @@ class SettingsStore(context: Context) {
         set(value) { prefs.edit().putBoolean(KEY_DUAL_SCREEN, value).apply() }
 
     /**
-     * Also keep the original health / crest / silk HUD on the main screen
+     * Also keep the original health / crest / silk / equipped-tool HUD on the main screen
      * while dual-screen rendering is active. Defaults OFF and is exported
      * for the next game launch. Has no effect without a working second screen.
      */

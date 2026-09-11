@@ -111,6 +111,14 @@ public static class DsProbe
         if (renderer != null)
             sb.Append("  [layer=").Append(t.gameObject.layer).Append(" enabled=").Append(renderer.enabled)
               .Append(" bounds=").Append(renderer.bounds).Append(']');
+        var canvas = t.GetComponent<Canvas>();
+        if (canvas != null)
+            sb.Append("  [Canvas mode=").Append(canvas.renderMode).Append(" layer=").Append(t.gameObject.layer)
+              .Append(" active=").Append(canvas.isActiveAndEnabled).Append(']');
+        var image = t.GetComponent<UnityEngine.UI.Image>();
+        if (image != null)
+            sb.Append("  [Image sprite=").Append(image.sprite != null ? image.sprite.name : "null")
+              .Append(" fill=").Append(image.fillAmount).Append(" layer=").Append(t.gameObject.layer).Append(']');
 
         // What a PlayerDataTestResponse is actually testing, and its answer.
         // Several widgets are gated by these, and "which objects should be

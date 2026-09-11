@@ -231,6 +231,12 @@ static class Program
                (foreign | DsHudRouting.CaptureMask), "Mask restoration overwrote unrelated bits");
         Assert(DsHudRouting.RestoreMask(foreign | DsHudRouting.CaptureMask, 32) == foreign,
             "Mask restoration did not restore a cleared capture bit");
+        Assert((DsHudRouting.PrimaryMask(32, true, true) & DsHudRouting.CaptureMask) == 0,
+            "A hidden HUD left radial canvas batches on the primary camera");
+        Assert((DsHudRouting.PrimaryMask(32, false, true) & DsHudRouting.CaptureMask) != 0,
+            "First-frame/failure fallback hid the radial canvas batches");
+        Assert(DsHudRouting.PrimaryMask(32, false, false) == 32,
+            "A primary camera was changed without a routed canvas batch");
     }
 
     sealed class RenderTarget
@@ -282,6 +288,33 @@ static class Program
         Assert(scope.Active && first.Layer == 5 && scope.Count == 1, "One restore failure blocked other restorations");
         scope.Restore();
         Assert(!scope.Active && broken.Layer == 5, "A failed restoration could not be retried");
+
+        var toolSprite = new RenderTarget();
+        var worldCanvas = new RenderTarget();
+        var chargeRing = new RenderTarget();
+        var emptyRing = new RenderTarget();
+        var hudParts = new[] { toolSprite, worldCanvas, chargeRing, emptyRing };
+        scope.Begin(hudParts);
+        Assert(hudParts.All(p => p.Layer == DsHudRouting.CaptureLayer),
+            "Tool artwork and radial canvas graphics were not routed together");
+        scope.Restore();
+        Assert(hudParts.All(p => p.Layer == DsHudRouting.SourceLayer),
+            "Tool artwork or charge rings were left off the native layer");
+
+        var canvasScope = RenderScope();
+        canvasScope.Begin(new[] { worldCanvas, chargeRing, emptyRing });
+        int batchedLayer = worldCanvas.Layer;
+        scope.Begin(new[] { toolSprite });
+        scope.Restore();
+        Assert(canvasScope.Active && worldCanvas.Layer == batchedLayer && batchedLayer == DsHudRouting.CaptureLayer,
+            "Canvas layers were restored before all cameras consumed the UI batch");
+        Assert((DsHudRouting.PrimaryMask(32, true, true) & (1 << batchedLayer)) == 0,
+            "Primary rendering included the captured charge-ring batch");
+        Assert((DsHudRouting.PrimaryMask(32, false, true) & (1 << batchedLayer)) != 0,
+            "Show-on-top did not include the captured charge-ring batch");
+        canvasScope.Restore();
+        Assert(new[] { worldCanvas, chargeRing, emptyRing }.All(p => p.Layer == DsHudRouting.SourceLayer),
+            "Canvas batch layers were not restored before the next native update");
     }
 
     static void HudFraming()
@@ -322,6 +355,33 @@ static class Program
             "Framing retained an expanded animation bound");
         var small = new DsHudFrame(anchor, 0.8f, anchor.x + 4 * 0.8f, viewport * 0.5f, 0.5f, 1f);
         Assert(Math.Abs(small.PixelPitch - 27.5f) < 0.001f, "HUD scaling did not follow the smaller canvas");
+
+        var toolViewport = new Vector2(918, 220);
+        var nativeAnchor = new Vector3(-2.13f * 0.85f, 0.19f * 0.85f, -2f);
+        float nativePitch = 0.94f * 0.85f;
+        float lastToolX = (3.11f + 2.4f) * 0.85f;
+        foreach (int masks in new[] { 5, 10 })
+        {
+            float right = Math.Max(lastToolX, nativeAnchor.x + (masks - 1) * nativePitch);
+            var withTools = new DsHudFrame(nativeAnchor, nativePitch, right, toolViewport, 1f, 1f);
+            Assert(Math.Abs(withTools.PixelPitch - 55f) < 0.001f, "Tool icons reduced the approved health scale");
+            float unitsToPixels = withTools.PixelPitch / nativePitch;
+            for (int i = 0; i < 3; i++)
+            {
+                float x = (3.11f + i * 1.2f) * 0.85f;
+                float y = -1.35f * 0.85f;
+                float halfW = 1.265625f * 0.85f * 0.5f;
+                float halfH = 1.328125f * 0.85f * 0.5f;
+                foreach (float edgeX in new[] { x - halfW, x + halfW })
+                foreach (float edgeY in new[] { y - halfH, y + halfH })
+                {
+                    float px = (edgeX - withTools.Position.x) * unitsToPixels + toolViewport.x * 0.5f;
+                    float py = toolViewport.y * 0.5f - (edgeY - withTools.Position.y) * unitsToPixels;
+                    Assert(px >= 0f && px <= toolViewport.x && py >= 0f && py <= toolViewport.y,
+                        "A native tool/skill charge ring is clipped by the HUD texture");
+                }
+            }
+        }
         Throws<ArgumentException>(() => new DsHudFrame(new Vector3(float.NaN, 0, 0), 1f, 10f, viewport, 1f, 1f));
         Throws<ArgumentOutOfRangeException>(() => new DsHudFrame(anchor, 0f, 10f, viewport, 1f, 1f));
         Throws<ArgumentOutOfRangeException>(() => new DsHudFrame(anchor, 1f, 10f, Vector2.zero, 1f, 1f));

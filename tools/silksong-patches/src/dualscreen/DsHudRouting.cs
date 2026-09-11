@@ -45,10 +45,16 @@ public static class DsHudRouting
     {
         return (current & ~CaptureMask) | (original & CaptureMask);
     }
+
+    public static int PrimaryMask(int original, bool hideHud, bool canvasBatchRouted)
+    {
+        if (hideHud) return original & ~CaptureMask;
+        return canvasBatchRouted ? original | CaptureMask : original;
+    }
 }
 
-// Layers change only between one camera's pre-cull and post-render callbacks.
-// Native updates (including cloning health slots) always see the original layer.
+// Sprite scopes surround a camera render; canvas scopes span batching through
+// the end of the frame. Both restore the original layer before native updates.
 public sealed class DsHudRenderScope<T> where T : class
 {
     readonly Func<T, bool> _alive;

@@ -1,5 +1,6 @@
 #if UNITY_ANDROID && !UNITY_EDITOR
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
@@ -15,20 +16,29 @@ public sealed class DsHudView : MonoBehaviour
     readonly List<PlayMakerFSM> _healthFsms = new List<PlayMakerFSM>();
     readonly List<BlueHealth> _blueHealth = new List<BlueHealth>();
     readonly List<Vector3> _maskPositions = new List<Vector3>();
+    readonly List<ToolHudIcon> _toolIcons = new List<ToolHudIcon>();
+    readonly List<Canvas> _toolCanvases = new List<Canvas>();
+    readonly List<Graphic> _toolGraphics = new List<Graphic>();
+    readonly List<GameObject> _canvasTargets = new List<GameObject>();
     readonly DsHudRenderScope<GameObject> _scope = new DsHudRenderScope<GameObject>(
         go => go != null, go => go.layer, (go, layer) => go.layer = layer);
+    readonly DsHudRenderScope<GameObject> _canvasScope = new DsHudRenderScope<GameObject>(
+        go => go != null, go => go.layer, (go, layer) => go.layer = layer);
+    Coroutine _canvasCleanup;
 
     Camera _capture, _scopedCamera;
     RenderTexture _texture;
     RawImage _image;
     TmpText _fallback;
     GameCameras _gameCameras;
-    Transform _hudRoot, _health, _barParent, _capRAnchor;
+    Transform _hudRoot, _health, _barParent, _capRAnchor, _tools;
     SilkSpool _spool;
     BindOrbHudFrame _bindFrame;
     Bounds _bounds;
     Matrix4x4 _worldToFrame;
     int _savedMask, _capturedFrame = -1, _hiddenFrame = -1;
+    int _canvasFrame = -1;
+    int _activeTools, _activeToolCanvases;
     bool _wanted, _failed, _stopped, _submitted, _showTop, _probed, _presented;
     float _zoom, _nextBind, _nextDiagnostic, _maskPixelPitch, _waitingSince = -1f;
     string _waitingReason;
@@ -42,7 +52,9 @@ public sealed class DsHudView : MonoBehaviour
     {
         var rect = DsWidgets.Rect(host, "health");
         float w = Mathf.Min(width - DsTheme.Pad * 2f, width * 0.74f);
-        float h = height - DsTheme.Pad * 2f;
+        // Tool charge rings sit below the silk row. Use the existing header's
+        // bottom padding too, without changing the health scale or body bounds.
+        float h = height - DsTheme.Pad;
         DsWidgets.Place(rect, DsTheme.Pad, DsTheme.Pad, w, h);
         _image = rect.gameObject.AddComponent<RawImage>();
         _image.raycastTarget = false;
@@ -92,12 +104,14 @@ public sealed class DsHudView : MonoBehaviour
         if (_stopped) return;
         Camera.onPreCull += BeforeCamera;
         Camera.onPostRender += AfterCamera;
+        _canvasCleanup = StartCoroutine(RestoreCanvasAtFrameEnd());
     }
 
     void OnDisable()
     {
         Camera.onPreCull -= BeforeCamera;
         Camera.onPostRender -= AfterCamera;
+        StopCanvasCleanup();
         SetVisible(false);
     }
 
@@ -113,7 +127,26 @@ public sealed class DsHudView : MonoBehaviour
         _wanted = false;
         Camera.onPreCull -= BeforeCamera;
         Camera.onPostRender -= AfterCamera;
+        StopCanvasCleanup();
         Suspend();
+    }
+
+    void StopCanvasCleanup()
+    {
+        if (_canvasCleanup == null) return;
+        StopCoroutine(_canvasCleanup);
+        _canvasCleanup = null;
+    }
+
+    IEnumerator RestoreCanvasAtFrameEnd()
+    {
+        var endOfFrame = new WaitForEndOfFrame();
+        while (true)
+        {
+            yield return endOfFrame;
+            try { _canvasScope.Restore(); }
+            catch (Exception e) { Fail(e); }
+        }
     }
 
     void Suspend()
@@ -123,7 +156,7 @@ public sealed class DsHudView : MonoBehaviour
         _submitted = false;
         _presented = false;
         if (_image != null) _image.color = Color.clear;
-        try { RestoreScope(); }
+        try { RestoreAllScopes(); }
         catch (Exception e) { Fail(e); }
     }
 
@@ -133,6 +166,7 @@ public sealed class DsHudView : MonoBehaviour
         {
             if (_scope.Active)
                 throw new InvalidOperationException("A camera did not finish its HUD render scope");
+            _canvasScope.Restore();
             if (_failed || !_wanted || !DsTouch.Ready || !DsGameData.InGame)
             {
                 Suspend();
@@ -165,6 +199,7 @@ public sealed class DsHudView : MonoBehaviour
             // RawImage colour changes after a capture reach the canvas rebuild
             // on the next frame. Keep the top HUD during that first hand-off.
             _presented = DsHudRouting.HasPresentedFrame(_image.color.a > 0f, _capturedFrame, Time.frameCount);
+            PrepareCanvasScope();
             _capture.enabled = true;
             Diagnostic();
         }
@@ -194,7 +229,8 @@ public sealed class DsHudView : MonoBehaviour
     {
         var cameras = GameCameras.SilentInstance;
         if (cameras != null && cameras == _gameCameras && _hudRoot != null &&
-            _health != null && _spool != null && _bindFrame != null && _barParent != null && _capRAnchor != null)
+            _health != null && _spool != null && _bindFrame != null && _barParent != null &&
+            _capRAnchor != null && _tools != null)
             return true;
         if (Time.unscaledTime < _nextBind) return false;
         _nextBind = Time.unscaledTime + 1f;
@@ -208,7 +244,9 @@ public sealed class DsHudView : MonoBehaviour
         var frame = spool.GetComponentInChildren<BindOrbHudFrame>(true);
         var bar = spool.transform.Find("Thread Spool/Parent");
         var cap = spool.transform.Find("Thread Spool/Cap R Anchored");
-        if (health == null || frame == null || bar == null || cap == null || !spool.transform.IsChildOf(root)) return false;
+        var tools = root.Find("Tool Icons");
+        if (health == null || frame == null || bar == null || cap == null || tools == null ||
+            !spool.transform.IsChildOf(root)) return false;
 
         if (!string.IsNullOrEmpty(LayerMask.LayerToName(DsHudRouting.CaptureLayer)))
             throw new InvalidOperationException("The health capture layer is already named by the game");
@@ -218,6 +256,12 @@ public sealed class DsHudView : MonoBehaviour
                 renderer.gameObject.layer == DsHudRouting.CaptureLayer)
                 throw new InvalidOperationException("The health capture layer is in use by " + renderer.name);
         }
+        foreach (var canvas in Resources.FindObjectsOfTypeAll<Canvas>())
+        {
+            if (canvas != null && canvas.gameObject.scene.IsValid() &&
+                canvas.gameObject.layer == DsHudRouting.CaptureLayer)
+                throw new InvalidOperationException("The health capture layer is in use by canvas " + canvas.name);
+        }
 
         _gameCameras = cameras;
         _hudRoot = root;
@@ -226,8 +270,10 @@ public sealed class DsHudView : MonoBehaviour
         _bindFrame = frame;
         _barParent = bar;
         _capRAnchor = cap;
+        _tools = tools;
         _roots.Add(health);
         _roots.Add(spool.transform);
+        _roots.Add(tools);
         foreach (string name in new[] {
             "Crest Get Effects", "Blue_Health_Overblue_HUD_burst", "Blue_Health_Overblue_HUD_drips",
         })
@@ -235,7 +281,7 @@ public sealed class DsHudView : MonoBehaviour
             var effects = root.Find(name);
             if (effects != null) _roots.Add(effects);
         }
-        Debug.Log("[DsHud] bound live Health and Spool under '" + root.name + "'; " + CanvasState());
+        Debug.Log("[DsHud] bound live Health, Spool and Tool Icons under '" + root.name + "'; " + CanvasState());
         if (!_probed && DsConfig.Bool("hud_probe", false))
         {
             _probed = true;
@@ -246,21 +292,24 @@ public sealed class DsHudView : MonoBehaviour
 
     void BeforeCamera(Camera camera)
     {
-        if (_failed || !CanPresent || _capture == null) return;
+        bool running = !_failed && CanPresent && _capture != null;
+        bool canvasBatch = _canvasFrame == Time.frameCount;
+        if (!running && !canvasBatch) return;
         try
         {
-            if (_scope.Active)
+            if (_scope.Active || _scopedCamera != null)
                 throw new InvalidOperationException("Nested camera rendering interrupted the health capture");
 
-            bool capture = camera == _capture;
-            bool hide = DsHudRouting.HideOnPrimary(_showTop, _presented && CanPresent,
-                NativeVisible, _capturedFrame, Time.frameCount) &&
-                DsHudRouting.IsPrimaryCamera(camera.targetDisplay, camera.targetTexture != null, camera.cullingMask,
-                    camera == _gameCameras.hudCamera || camera == _gameCameras.mainCamera);
-            if (!capture && !hide) return;
-            if (!NativeVisible) return;
+            bool capture = running && camera == _capture;
+            bool primary = DsHudRouting.IsPrimaryCamera(camera.targetDisplay, camera.targetTexture != null,
+                camera.cullingMask, _gameCameras != null &&
+                (camera == _gameCameras.hudCamera || camera == _gameCameras.mainCamera));
+            bool hide = running && primary && DsHudRouting.HideOnPrimary(_showTop, _presented,
+                NativeVisible, _capturedFrame, Time.frameCount);
+            if (!capture && !hide && !(primary && canvasBatch)) return;
+            if (capture && !NativeVisible) return;
 
-            CollectRenderers();
+            if (capture || hide) CollectRenderers();
             if (capture)
             {
                 _submitted = false;
@@ -276,8 +325,8 @@ public sealed class DsHudView : MonoBehaviour
             _scopedCamera = camera;
             _savedMask = camera.cullingMask;
             camera.cullingMask = capture ? DsHudRouting.CaptureMask
-                                         : camera.cullingMask & ~DsHudRouting.CaptureMask;
-            _scope.Begin(_targets);
+                                         : DsHudRouting.PrimaryMask(_savedMask, hide, canvasBatch);
+            if (capture || hide) _scope.Begin(_targets);
             _submitted = capture && _scope.Count > 0;
             if (hide) _hiddenFrame = Time.frameCount;
         }
@@ -312,6 +361,12 @@ public sealed class DsHudView : MonoBehaviour
         }
     }
 
+    void RestoreAllScopes()
+    {
+        try { RestoreScope(); }
+        finally { _canvasScope.Restore(); }
+    }
+
     void CollectRenderers()
     {
         _renderers.Clear();
@@ -329,6 +384,38 @@ public sealed class DsHudView : MonoBehaviour
                 renderer.gameObject.layer == DsHudRouting.SourceLayer)
                 _targets.Add(renderer.gameObject);
         }
+    }
+
+    void PrepareCanvasScope()
+    {
+        // uGUI batches before camera callbacks. Keep these layers in place for
+        // the whole render phase, then restore them at WaitForEndOfFrame.
+        _canvasTargets.Clear();
+        _activeToolCanvases = 0;
+        _toolCanvases.Clear();
+        _tools.GetComponentsInChildren(true, _toolCanvases);
+        foreach (var canvas in _toolCanvases)
+        {
+            if (canvas == null || !canvas.isActiveAndEnabled) continue;
+            if (canvas.renderMode != RenderMode.WorldSpace)
+                throw new InvalidOperationException("Native tool HUD canvas is not world-space: " + canvas.name);
+            if (canvas.gameObject.layer == DsHudRouting.SourceLayer)
+            {
+                _canvasTargets.Add(canvas.gameObject);
+                _activeToolCanvases++;
+            }
+        }
+        _toolGraphics.Clear();
+        _tools.GetComponentsInChildren(true, _toolGraphics);
+        foreach (var graphic in _toolGraphics)
+        {
+            if (graphic != null && graphic.isActiveAndEnabled && graphic.canvas != null &&
+                graphic.canvas.renderMode == RenderMode.WorldSpace &&
+                graphic.gameObject.layer == DsHudRouting.SourceLayer)
+                _canvasTargets.Add(graphic.gameObject);
+        }
+        _canvasScope.Begin(_canvasTargets);
+        if (_canvasScope.Count > 0) _canvasFrame = Time.frameCount;
     }
 
     bool FrameCamera()
@@ -364,6 +451,15 @@ public sealed class DsHudView : MonoBehaviour
         {
             if (blue != null && blue.gameObject.activeInHierarchy)
                 rightmost = Mathf.Max(rightmost, LayoutPosition(blue.transform).x);
+        }
+        _activeTools = 0;
+        _toolIcons.Clear();
+        _tools.GetComponentsInChildren(true, _toolIcons);
+        foreach (var icon in _toolIcons)
+        {
+            if (icon == null || !icon.gameObject.activeInHierarchy || icon.CurrentTool == null) continue;
+            _activeTools++;
+            rightmost = Mathf.Max(rightmost, LayoutPosition(icon.transform).x);
         }
 
         // Slot origins and the unanimated spool cap define layout. Sampling
@@ -440,6 +536,7 @@ public sealed class DsHudView : MonoBehaviour
                   " hidden-top=" + _hiddenFrame + " renderers=" + _targets.Count +
                   " health=" + pd.health + "/" + pd.CurrentMaxHealth + " blue=" + pd.healthBlue +
                   " silk=" + pd.silk + "/" + pd.CurrentSilkMax +
+                  " tool-icons=" + _activeTools + " radial-canvases=" + _activeToolCanvases +
                   " layout=" + _bounds + " mask-pitch-px=" + _maskPixelPitch.ToString("F1") +
                   " ortho=" + _capture.orthographicSize + " show-top=" + _showTop);
     }
@@ -467,7 +564,7 @@ public sealed class DsHudView : MonoBehaviour
         _presented = false;
         if (_capture != null) _capture.enabled = false;
         if (_image != null) _image.color = Color.clear;
-        try { RestoreScope(); }
+        try { RestoreAllScopes(); }
         catch (Exception restore) { Debug.LogError("[DsHud] restoration failed: " + restore); }
         if (_fallback != null)
         {
