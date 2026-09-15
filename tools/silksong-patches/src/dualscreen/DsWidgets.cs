@@ -183,7 +183,17 @@ public static class DsWidgets
         var rt = Rect(parent, name);
         var t = rt.gameObject.AddComponent<TmpText>();
         var font = display ? DsTheme.Display : DsTheme.Body;
-        if (font != null) t.font = font;
+        if (font != null)
+        {
+            t.font = font;
+            // And the material with it. A TMP component built at runtime keeps
+            // whatever material it was constructed with, and a material carries
+            // the ATLAS TEXTURE: leave it behind and the glyph rects of one font
+            // are used to sample another font's atlas, which does not fail
+            // loudly -- most letters land on something plausible and a few come
+            // out as fragments of the wrong glyph.
+            try { if (font.material != null) t.fontSharedMaterial = font.material; } catch { }
+        }
         t.text = text;
         t.fontSize = size;
         t.color = color;

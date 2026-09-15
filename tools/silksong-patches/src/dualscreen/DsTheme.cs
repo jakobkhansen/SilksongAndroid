@@ -82,6 +82,49 @@ public static class DsTheme
     static TmpFont _display, _body;
     static bool _searched;
     static float _nextSearch;
+    static float _firstSearch;
+
+    // Characters the panel needs and has been seen to lose: a capital M, and
+    // the curly apostrophe the game's prose is written with. They are the test
+    // because they are what broke -- "Massive Mossgrub" came out as two
+    // apostrophes and a box, from a font whose NAME was right.
+    const string Required = "MACSIFmacsif\u2019";
+
+    /// <summary>
+    /// How good a candidate this is: its atlas size, except that a font which
+    /// cannot draw what we need loses to one that can, however large its atlas.
+    ///
+    /// The vendored TMP is the OLD one -- a single static atlas and a plain
+    /// dictionary, with no runtime glyph population -- so a character is either
+    /// baked in or it can never be drawn. That makes picking the RIGHT asset
+    /// the whole game: more than one loaded asset answers to "perpetua", and
+    /// taking the first found meant taking whichever Unity happened to
+    /// enumerate first, which could be a subset cut for some other screen.
+    /// </summary>
+    static int Coverage(TmpFont f)
+    {
+        int chars = 0;
+        try { chars = f.characterDictionary == null ? 0 : f.characterDictionary.Count; } catch { }
+
+        int missing = 0;
+        for (int i = 0; i < Required.Length; i++)
+        {
+            bool has = true;
+            try { has = f.HasCharacter(Required[i]); } catch { }
+            if (!has) missing++;
+        }
+        return chars - missing * 100000;
+    }
+
+    static bool Complete(TmpFont f)
+    {
+        if (f == null) return false;
+        for (int i = 0; i < Required.Length; i++)
+        {
+            try { if (!f.HasCharacter(Required[i])) return false; } catch { }
+        }
+        return true;
+    }
 
     /// <summary>Caps display face, for tabs and titles.</summary>
     public static TmpFont Display { get { Search(); return _display ?? _body; } }
@@ -100,11 +143,24 @@ public static class DsTheme
         // label: before the game's UI exists there can be dozens of Label calls
         // in a single build pass.
         if (Time.unscaledTime < _nextSearch) return;
+        if (_firstSearch == 0f) _firstSearch = Time.unscaledTime;
         _nextSearch = Time.unscaledTime + 1f;
 
         try
         {
             var fonts = Resources.FindObjectsOfTypeAll<TmpFont>();
+            int bestDisplay = int.MinValue, bestBody = int.MinValue;
+
+            // An exact asset name can be forced from the knob file, so a font
+            // that looks right by name but renders wrong can be swapped for
+            // another candidate with a restart instead of a ten-minute build.
+            // The game ships several assets per face -- two Perpetuas, two
+            // Trajans -- and which one is sound is not something the name says.
+            string wantBody = DsConfig.Str("font_body", null);
+            string wantDisplay = DsConfig.Str("font_display", null);
+
+            // Every candidate is scored rather than the first one taken, so the
+            // scan cannot stop early: the better asset may be enumerated last.
             for (int i = 0; i < fonts.Length; i++)
             {
                 var f = fonts[i];
@@ -115,18 +171,43 @@ public static class DsTheme
                 // adopting it is how this screen ended up in Arial once.
                 if (n.Contains("arial") || n.Contains("liberation")) continue;
 
-                if (_display == null && n.Contains("trajan")) _display = f;
-                else if (_body == null && (n.Contains("perpetua") || n.Contains("amor"))) _body = f;
+                // A forced name wins outright, whatever it scores.
+                if (!string.IsNullOrEmpty(wantBody) &&
+                    string.Equals(f.name, wantBody, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    bestBody = int.MaxValue; _body = f; continue;
+                }
+                if (!string.IsNullOrEmpty(wantDisplay) &&
+                    string.Equals(f.name, wantDisplay, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    bestDisplay = int.MaxValue; _display = f; continue;
+                }
 
-                if (_display != null && _body != null) break;
+                int score = Coverage(f);
+                if (n.Contains("trajan"))
+                {
+                    if (score > bestDisplay) { bestDisplay = score; _display = f; }
+                }
+                else if (n.Contains("perpetua") || n.Contains("amor"))
+                {
+                    if (score > bestBody) { bestBody = score; _body = f; }
+                }
             }
 
-            if (_display != null || _body != null)
-            {
-                _searched = true;
-                Debug.Log("[DsTheme] fonts: display='" + (_display != null ? _display.name : "-") +
-                          "' body='" + (_body != null ? _body.name : "-") + "'");
-            }
+            if (_display == null && _body == null) return;
+
+            // Keep looking while what we have cannot draw the characters we
+            // need. The game loads its UI progressively, and latching onto an
+            // incomplete asset found early is exactly the failure this fixes.
+            // Give up after half a minute and take the best seen, because a
+            // font that renders most things beats no text at all.
+            bool good = Complete(_body) && (_display == null || Complete(_display));
+            if (!good && Time.unscaledTime - _firstSearch < 30f) return;
+
+            _searched = true;
+            Debug.Log("[DsTheme] fonts: display='" + (_display != null ? _display.name : "-") +
+                      "' body='" + (_body != null ? _body.name : "-") +
+                      "' complete=" + good);
         }
         catch (System.Exception e)
         {
@@ -137,7 +218,7 @@ public static class DsTheme
     /// <summary>Fonts appear once the game has loaded its UI; allow a retry.</summary>
     public static void ForgetFont()
     {
-        _display = null; _body = null; _searched = false; _nextSearch = 0f;
+        _display = null; _body = null; _searched = false; _nextSearch = 0f; _firstSearch = 0f;
     }
 
     // ── sprites ─────────────────────────────────────────────────────────────
