@@ -112,6 +112,14 @@ public class DsIconGrid
     // thing selected beside them, read at arm's length.
     const float DetailTitleSize = 48f;
     const float DetailBodySize = 36f;
+    // ...at the width those sizes were chosen for. The pane used to be a band
+    // across the whole panel; as a column of its own it is a third of that, and
+    // at 48 px an item name like "Pale Oil Lantern" sets a line per word. Below
+    // the reference width the face comes down with it, to a floor -- the point
+    // is to fit a name on a line or two, not to keep shrinking until prose is
+    // unreadable on a 9 cm screen.
+    const float DetailRefWidth = 500f;
+    const float DetailMinScale = 0.78f;
 
     RectTransform _grid, _detail;
     TmpText _title, _desc, _empty;
@@ -141,8 +149,20 @@ public class DsIconGrid
     /// THAT instead, so the grid can run the full height of the panel and no
     /// column is left with a hole in it.
     /// </param>
+    /// <param name="detailRule">
+    /// Whether to rule the detail pane off along its TOP edge.
+    ///
+    /// True is right when the pane is the bottom of a column: its top edge is
+    /// then the only side that divides it from anything. It is wrong when the
+    /// pane is a full-height column of its own, which is what the description
+    /// section on Inventory and Crest now is -- there the boundary runs down
+    /// the gutter beside it and the screen draws that rule itself, so a
+    /// horizontal rule here would be a second line across the top of a column
+    /// that nothing sits above.
+    /// </param>
     public void Build(RectTransform host, int columns,
-                      float left = -1f, float width = -1f, Rect detail = default(Rect))
+                      float left = -1f, float width = -1f, Rect detail = default(Rect),
+                      bool detailRule = true)
     {
         _columns = Mathf.Max(1, columns);
 
@@ -179,7 +199,8 @@ public class DsIconGrid
         // A rule above the description, not a box around it. This pane is the
         // bottom of a column and its top edge is the only side that actually
         // divides it from anything -- the other three border the panel itself.
-        DsWidgets.HRule(host, "detail-rule", detail.x, detail.y - DsTheme.Pad * 0.5f, detail.width);
+        if (detailRule)
+            DsWidgets.HRule(host, "detail-rule", detail.x, detail.y - DsTheme.Pad * 0.5f, detail.width);
 
         _detail = DsWidgets.Rect(host, "detail");
         DsWidgets.Place(_detail, detail.x, detail.y, detail.width, detail.height);
@@ -192,14 +213,26 @@ public class DsIconGrid
         // Sized like the Tasks pane rather than from the shared theme sizes:
         // this is the same job -- a name and prose about whatever is selected
         // beside it -- read at arm's length on a small panel.
-        // The body face: this holds an item's display NAME, which is mixed case.
-        _title = DsWidgets.Label(_detail, "title", "", DetailTitleSize, DsTheme.Ink,
-                                 TmpAlign.Left);
-        if (_title != null) DsWidgets.Place(_title.rectTransform, 0f, 4f, detail.width, 58f);
+        float textScale = Mathf.Clamp(detail.width / DetailRefWidth, DetailMinScale, 1f);
+        float titleSize = DetailTitleSize * textScale;
+        float titleH = titleSize + 10f;
 
-        _desc = DsWidgets.Label(_detail, "desc", "", DetailBodySize, DsTheme.Ink);
+        // The body face: this holds an item's display NAME, which is mixed case.
+        _title = DsWidgets.Label(_detail, "title", "", titleSize, DsTheme.Ink,
+                                 TmpAlign.Left);
+        if (_title != null) DsWidgets.Place(_title.rectTransform, 0f, 4f, detail.width, titleH);
+
+        // TopLeft, not Left: in TMP "Left" is middle-left, and this rect is now
+        // the height of a whole column rather than the 170 px band the pane
+        // used to be. Vertically centred prose in a tall rect floats in the
+        // middle of the panel with a gap under its own title, which is what it
+        // did on Inventory and Crest -- the Journal and Tasks panes were always
+        // TopLeft and so never showed it.
+        _desc = DsWidgets.Label(_detail, "desc", "", DetailBodySize * textScale, DsTheme.Ink,
+                                TmpAlign.TopLeft);
         if (_desc != null)
-            DsWidgets.Place(_desc.rectTransform, 0f, 68f, detail.width, detail.height - 76f);
+            DsWidgets.Place(_desc.rectTransform, 0f, titleH + 10f, detail.width,
+                            detail.height - titleH - 18f);
 
         _empty = DsWidgets.Label(_grid, "empty", EmptyMessage, DsTheme.BodySize,
                                  DsTheme.InkFaint, TmpAlign.Center);

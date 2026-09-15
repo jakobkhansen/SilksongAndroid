@@ -45,11 +45,16 @@ public abstract class DsGridScreen : IDsScreen
     protected virtual float GridWidth => -1f;
     /// <summary>Where the detail pane goes; zero width means under the grid.</summary>
     protected virtual Rect DetailRect => default(Rect);
+    /// <summary>
+    /// Rule the detail pane off along its top edge. False for a pane that is a
+    /// full-height column of its own, whose boundary runs down the gutter.
+    /// </summary>
+    protected virtual bool DetailRule => true;
 
     public virtual void Build(RectTransform host)
     {
         Grid.EmptyMessage = EmptyMessage;
-        Grid.Build(host, Columns, GridLeft, GridWidth, DetailRect);
+        Grid.Build(host, Columns, GridLeft, GridWidth, DetailRect, DetailRule);
         Refresh();
     }
 
@@ -150,45 +155,61 @@ public abstract class DsGridScreen : IDsScreen
 
 public class DsInventoryScreen : DsGridScreen
 {
-    // The collectables share the panel with Hornet's own standing, the way the
-    // game's Inventory pane does: what you are carrying on the right, what you
-    // ARE on the left, and one description pane along the bottom that either
-    // side can write to.
-    const float LeftX  = 20f;
-    const float LeftW  = 520f;
-    const float GridX  = 560f;
-    const float GridW  = 660f;
-    const float DetailH = 190f;
+    // Three columns: what Hornet IS, what she is CARRYING, and what the thing
+    // under the cursor is.
+    //
+    // The description used to be a band along the bottom spanning both columns.
+    // It read as a caption on the whole screen rather than on the selection,
+    // and it cost the grid the bottom 190 px of a panel that has no vertical
+    // room to spare -- so the items were laid out wide and short, which is the
+    // wrong shape for a list that grows.
+    //
+    // Giving it a column of its own turns that around: the grid is now narrow
+    // and FULL HEIGHT, which is the shape a collection actually has, and it
+    // scrolls when there are more items than fit rather than being sized to the
+    // worst case. The rules run down the two gutters, so each column is bounded
+    // by the thing beside it instead of by a line under everything.
+    const float LeftX   = 20f;    // Hornet: 20 .. 440
+    const float LeftW   = 420f;
+    const float GridX   = 470f;   // items:  470 .. 870
+    const float GridW   = 400f;
+    const float DetailX = 900f;   // prose:  900 .. 1220
+    const float DetailW = 320f;
 
     readonly DsHornetPanel _hornet = new DsHornetPanel();
 
     public override string Id => "inventory";
     public override string Title => "INVENTORY";
-    protected override int Columns => 4;
+    // Three across, not four. In a 400 px column four cells are 92 px, which is
+    // under 7 mm on this panel -- smaller than a fingertip and smaller than the
+    // art wants. Three gives 127 px and the icons room to be recognised.
+    protected override int Columns => 3;
     protected override string EmptyMessage => "Nothing collected yet";
     protected override float GridLeft => GridX;
     protected override float GridWidth => GridW;
 
-    protected override Rect DetailRect
-    {
-        get
-        {
-            var layout = DsLayout.Current;
-            return new Rect(LeftX, layout.Body.height - DetailH, layout.Width - LeftX * 2f,
-                            DetailH - DsTheme.Pad);
-        }
-    }
+    // A column, not the bottom of one: the gutter rule beside it is already the
+    // boundary, so it takes no rule across its top.
+    protected override bool DetailRule => false;
+
+    protected override Rect DetailRect =>
+        new Rect(DetailX, DsTheme.Pad, DetailW,
+                 DsLayout.Current.Body.height - DsTheme.Pad * 2f);
 
     public override void Build(RectTransform host)
     {
-        float bodyH = DsLayout.Current.Body.height;
-        _hornet.Build(host, LeftX, DsTheme.Pad, LeftW, bodyH - DetailH - DsTheme.Pad * 2f);
+        float colH = DsLayout.Current.Body.height - DsTheme.Pad * 2f;
 
-        // Down the gutter between what Hornet IS and what she is carrying. It
-        // stops on the rule above the description, which both columns share, so
-        // the two meet rather than one overshooting the other.
-        DsWidgets.VRule(host, "split", (LeftX + LeftW + GridX) * 0.5f, DsTheme.Pad,
-                        bodyH - DetailH - DsTheme.Pad * 1.5f);
+        // Full height now. The character column no longer stops short to leave
+        // room for a description band underneath it.
+        _hornet.Build(host, LeftX, DsTheme.Pad, LeftW, colH);
+
+        // One rule per boundary, down the middle of each gutter. Both run the
+        // full height of the body, because all three columns now do.
+        DsWidgets.VRule(host, "split-items", (LeftX + LeftW + GridX) * 0.5f,
+                        DsTheme.Pad, colH);
+        DsWidgets.VRule(host, "split-detail", (GridX + GridW + DetailX) * 0.5f,
+                        DsTheme.Pad, colH);
 
         // Both halves explain themselves in the same place.
         _hornet.OnSelect = (name, desc) => Grid.ShowDetail(name, desc);

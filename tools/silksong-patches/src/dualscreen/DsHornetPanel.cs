@@ -112,6 +112,13 @@ public class DsHornetPanel
     const float SpoolAspect = 0.75f;
     const float CoreAspect = 1f;
 
+    // The narrowest this composition can be laid out at before the spool runs
+    // off the end of the panel: the needle's lane, then the mask and the spool
+    // shoulder to shoulder. Derived from the parts rather than written down as
+    // 516, so resizing any of them cannot silently invalidate it.
+    const float MinArtW = 12f + NeedleW + 8f + MaskSize + ShardGap + SpoolSize + 10f;
+    const float MinArtH = 762f;
+
     public void Build(RectTransform host, float x, float y, float w, float h)
     {
         _x = x; _y = y; _w = w; _h = h;
@@ -122,15 +129,32 @@ public class DsHornetPanel
         _panel = DsWidgets.Rect(host, "hornet");
         DsWidgets.Place(_panel, x, y, w, h);
 
-        // Fit the existing composition rather than crushing the skill ring
-        // into the smaller space left by the shared HUD and bottom tabs.
-        float artHeight = Mathf.Max(h, 762f);
-        _artScale = h / artHeight;
-        _artX = (w - w * _artScale) * 0.5f;
+        // Fit the existing composition rather than crushing the skill ring into
+        // the smaller space left by the shared HUD and bottom tabs.
+        //
+        // Both axes, not just height. The column used to be 520 px and only the
+        // height was ever short, so scaling by height alone was enough. Now that
+        // the description has its own column the character column is narrower
+        // than the composition's natural width, and laying out at the requested
+        // width would push the spool -- which sits shoulder to shoulder with the
+        // mask, with only a few pixels to spare at 520 -- off the end of it.
+        //
+        // So the art is laid out at its natural size and scaled to fit, which is
+        // what the height already did. At the old 520x664 this is the same
+        // number it always was, so nothing that fits today moves.
+        float artWidth = Mathf.Max(w, MinArtW);
+        float artHeight = Mathf.Max(h, MinArtH);
+        _artScale = Mathf.Min(w / artWidth, h / artHeight);
+        _artX = (w - artWidth * _artScale) * 0.5f;
         var art = DsWidgets.Rect(_panel, "art");
-        DsWidgets.Place(art, _artX, 0f, w, artHeight);
+        DsWidgets.Place(art, _artX, 0f, artWidth, artHeight);
         art.localScale = new Vector3(_artScale, _artScale, 1f);
         _panel = art;
+
+        // Everything below lays out in ART space, so it must use the art's size
+        // rather than the column's. Missing this is how the currency row ended
+        // up measured against one width and drawn at another.
+        w = artWidth;
         h = artHeight;
 
         _needle = MakeSlot("needle", 12f, 34f, NeedleW, h - 170f);

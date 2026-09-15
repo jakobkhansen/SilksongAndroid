@@ -85,8 +85,8 @@ public class DsTasksScreen : IDsScreen
     }
 
     const float ListX   = 20f;
-    const float ListW   = 680f;
-    const float DetailX = 720f;
+    const float ListW   = 780f;
+    const float DetailX = 840f;
     const float RowH    = 78f;
     const float IconSize = 46f;
     const float CounterW = 100f;
@@ -105,9 +105,10 @@ public class DsTasksScreen : IDsScreen
     // a quest name is longer than the space a description actually needs.
     const float NameSize = 52f;
     // The description is prose and is read, not scanned, so it is larger than
-    // the shared body size too.
-    const float DetailTitleSize = 48f;
-    const float DetailBodySize = 36f;
+    // the shared body size too. Trimmed a little from the 48/36 it used when
+    // this pane was 500 px wide, since the list took some of that back.
+    const float DetailTitleSize = 42f;
+    const float DetailBodySize = 32f;
     const float Pad = DsTheme.Pad;
 
     readonly List<Entry> _entries = new List<Entry>();

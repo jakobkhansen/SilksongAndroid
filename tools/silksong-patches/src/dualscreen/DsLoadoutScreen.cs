@@ -35,16 +35,24 @@ public class DsLoadoutScreen : IDsScreen
 {
     // Layout, in panel pixels with the origin at the top-left of the panel.
     //
-    // The left column is much the wider of the two: the crest and its ring are
-    // the thing you glance at, and the tool list only needs enough width for an
-    // icon, a name and a count. Three tools to a row rather than four keeps the
-    // icons the same size while giving the crest another 140 px.
-    const float LeftX = 20f;
-    const float LeftW = 700f;
-    const float ListX = 756f;
-    const float ListW = 464f;
+    // Three columns: the crest you are wearing, the tools you could socket into
+    // it, and what the one under the cursor actually does.
+    //
+    // The description used to sit UNDER the crest, in the left column, because
+    // the tool list ran the full height beside it and the space below the crest
+    // would otherwise have been a hole. That put the prose about a tool as far
+    // as it could be from the tool itself, and it pinned the crest to the top
+    // ~64% of its column whether or not the artwork wanted that shape.
+    //
+    // As its own column the description sits beside what it describes, and the
+    // crest gets its whole column back.
+    const float LeftX   = 20f;    // crest: 20 .. 490
+    const float LeftW   = 470f;
+    const float ListX   = 520f;   // tools: 520 .. 870
+    const float ListW   = 350f;
+    const float DetailX = 900f;   // prose: 900 .. 1220
+    const float DetailW = 320f;
     const int   ListColumns = 3;
-    const float PreferredCrestH = 620f;
     const float SlotIcon = 82f;
     const float ExtraIcon = 74f;
 
@@ -73,7 +81,12 @@ public class DsLoadoutScreen : IDsScreen
     {
         _host = host;
         float bodyH = DsLayout.Current.Body.height;
-        _crestH = Mathf.Min(PreferredCrestH, bodyH * 0.64f);
+        float colH = bodyH - 36f;
+
+        // The crest has its whole column now that the description has one of
+        // its own, so the ring is fitted to the full height rather than to the
+        // fraction that was left above the prose.
+        _crestH = colH;
 
         // ── left: the crest ────────────────────────────────────────────────
         // No box. The crest is divided from the tool list by the rule down the
@@ -89,17 +102,17 @@ public class DsLoadoutScreen : IDsScreen
         _crestImage = DsWidgets.Icon(_crestBox, "crest-art", null, Color.white);
         DsWidgets.Place(_crestImage.rectTransform, LeftW * 0.5f - 110f, 90f, 220f, 220f);
 
-        // ── right: the tools, as icons in colour groups ─────────────────────
-        // The grid runs the full height of the panel and puts its detail pane
-        // under the CREST instead of under itself, so the space beneath the
-        // crest is used and neither column has a hole in it.
-        float detailY = 16f + _crestH + 16f;
+        // ── the two gutters ────────────────────────────────────────────────
+        // One rule per boundary, down the middle of each, both full height:
+        // all three columns now run the depth of the body.
+        DsWidgets.VRule(host, "split-tools", (LeftX + LeftW + ListX) * 0.5f, 16f, colH);
+        DsWidgets.VRule(host, "split-detail", (ListX + ListW + DetailX) * 0.5f, 16f, colH);
 
-        // Down the gutter between the crest column and the tools.
-        DsWidgets.VRule(host, "split", (LeftX + LeftW + ListX) * 0.5f, 16f, bodyH - 36f);
-
+        // ── centre: the tools; right: what the selected one does ───────────
+        // The detail pane takes no rule across its top -- the gutter rule
+        // beside it is already the boundary.
         _grid.Build(host, ListColumns, ListX, ListW,
-                    new Rect(LeftX, detailY, LeftW, bodyH - detailY - 20f));
+                    new Rect(DetailX, 16f, DetailW, colH), detailRule: false);
 
         Refresh(force: true);
     }

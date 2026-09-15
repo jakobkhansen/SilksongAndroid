@@ -125,6 +125,35 @@ Ignore the icons being rotated in the screenshot, they should still be upright. 
 disregard the "unequip skills" button text, this menu is not interactable with the
 controller, only touch.
 
+### Three columns
+
+Inventory, Crest and Journal now share one shape, which is the shape the screenshots
+have: a **chooser**, the **subject**, and a **description** — left to right, each column
+bounded by a rule down the gutter beside it rather than by a box around it.
+
+| Tab | Left | Centre | Right |
+| --- | --- | --- | --- |
+| Inventory | Hornet's own standing | the collectables, 3 across | selected item |
+| Crest | the equipped crest and its ring | every tool, 3 across | selected tool |
+| Journal | the creatures, 3 across | the selected creature | what is known about it |
+| Tasks | the quest list | — | selected quest |
+
+The description used to be the bottom of a column: a band across the whole panel on
+Inventory, and tucked under the crest or the portrait elsewhere. That put the prose as far
+as it could be from the thing it described, and it cost the grid the vertical room it
+needed. As its own column it sits beside the selection, and the grids run the full height
+of the body and **scroll**, which is the shape a collection that grows actually has.
+
+Two consequences worth recording, because both were silent:
+
+- The character column is now narrower than the Hornet composition's natural width, so
+  `DsHornetPanel` fits its art to **both** axes rather than to height alone. Laying out at
+  the requested width pushed the silk spool — which sits shoulder to shoulder with the
+  mask, with four pixels to spare at the old 520 — off the end of the panel.
+- `DsWidgets.Label` takes TMP's `Left`, which is *middle*-left. In a short band that reads
+  as top-aligned; in a full-height column the prose floats in the middle of the panel with
+  a gap under its own title. Description panes take `TopLeft`.
+
 ## Interactivity
 
 We want to make the Dual screen menu completely replace the in-game menu, this means we

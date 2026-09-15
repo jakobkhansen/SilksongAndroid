@@ -51,7 +51,7 @@ public class DsJournalScreen : IDsScreen
     // Left column: the chooser. Three to a row, small, because their job is to
     // be recognised rather than admired.
     const float ListX = 20f;
-    const float ListW = 440f;
+    const float ListW = 380f;
     const int   Columns = 3;
     const float CellGap = 14f;
     const float CornerSize = 46f;
@@ -59,13 +59,20 @@ public class DsJournalScreen : IDsScreen
     // outer cell is drawn rather than shaved. See the clip in Build.
     const float CursorBleed = 6f;
 
-    // Right column: the creature, then what is known about it. The same sizes
-    // the Tasks pane uses, because it is the same job -- a name and prose about
-    // the thing selected on the left.
-    const float RightX = 480f;
-    const float PortraitH = 560f;
-    const float DetailTitleSize = 48f;
-    const float DetailBodySize = 36f;
+    // Centre column: the creature. Right column: what is known about it.
+    //
+    // These were one column, the portrait stacked on top of the prose with a
+    // rule between them. Splitting them gives the portrait its full height --
+    // it is the thing you are looking at -- and puts the text beside it rather
+    // than beneath it, which is the same shape the other tabs now use: chooser,
+    // subject, description.
+    const float PortraitX = 430f;   // art:   430 .. 860
+    const float PortraitW = 430f;
+    const float DetailX   = 890f;   // prose: 890 .. 1220
+    const float DetailW   = 330f;
+    // Sized for a 330 px column; the old 48/36 was chosen for one twice as wide.
+    const float DetailTitleSize = 40f;
+    const float DetailBodySize = 30f;
 
     readonly List<Entry> _entries = new List<Entry>();
     readonly List<Cell> _cells = new List<Cell>();
@@ -93,7 +100,6 @@ public class DsJournalScreen : IDsScreen
         _host = host;
 
         var layout = DsLayout.Current;
-        float panelW = layout.Width;
         float bodyH = layout.Body.height;
 
         _listTop = 16f;
@@ -123,38 +129,36 @@ public class DsJournalScreen : IDsScreen
                                  DsTheme.InkDim, TmpAlign.Center);
         if (_empty != null) DsWidgets.Stretch(_empty.rectTransform);
 
-        // ── right ──────────────────────────────────────────────────────────
-        float rightW = panelW - RightX - 20f;
+        // ── centre and right ───────────────────────────────────────────────
+        float colH = bodyH - _listTop - 16f;
 
-        // Down the gutter between the creatures and the one being read about.
-        DsWidgets.VRule(host, "split", (ListX + ListW + RightX) * 0.5f, _listTop,
-                        bodyH - _listTop - 16f);
+        // One rule per boundary, down the middle of each gutter.
+        DsWidgets.VRule(host, "split-art", (ListX + ListW + PortraitX) * 0.5f,
+                        _listTop, colH);
+        DsWidgets.VRule(host, "split-detail", (PortraitX + PortraitW + DetailX) * 0.5f,
+                        _listTop, colH);
 
         _portraitBox = DsWidgets.Rect(host, "portrait");
-        DsWidgets.Place(_portraitBox, RightX, _listTop, rightW, PortraitH);
+        DsWidgets.Place(_portraitBox, PortraitX, _listTop, PortraitW, colH);
 
         _portrait = DsWidgets.Icon(_portraitBox, "art", null, Color.white);
-        _portraitW = rightW - 48f;
-        _portraitH = PortraitH - 48f;
+        _portraitW = PortraitW - 48f;
+        _portraitH = colH - 48f;
         DsWidgets.Place(_portrait.rectTransform, 24f, 24f, _portraitW, _portraitH);
 
-        float detailY = _listTop + PortraitH + 16f;
-        float detailH = bodyH - detailY - 16f;
-
-        // Between the picture and what is written about it.
-        DsWidgets.HRule(host, "detail-rule", RightX, detailY - 8f, rightW);
-
+        // No rule across the top of the description: it is a column of its own
+        // now, and the gutter rule beside it is already the boundary.
         _detail = DsWidgets.Rect(host, "detail");
-        DsWidgets.Place(_detail, RightX, detailY, rightW, detailH);
+        DsWidgets.Place(_detail, DetailX, _listTop, DetailW, colH);
 
         _name = DsWidgets.Label(_detail, "name", "", DetailTitleSize,
                                 DsTheme.Ink, TmpAlign.Left);
-        if (_name != null) DsWidgets.Place(_name.rectTransform, 0f, 8f, rightW, 60f);
+        if (_name != null) DsWidgets.Place(_name.rectTransform, 0f, 8f, DetailW, 52f);
 
         _desc = DsWidgets.Label(_detail, "desc", "", DetailBodySize,
                                 DsTheme.InkDim, TmpAlign.TopLeft);
         if (_desc != null)
-            DsWidgets.Place(_desc.rectTransform, 0f, 76f, rightW, detailH - 84f);
+            DsWidgets.Place(_desc.rectTransform, 0f, 68f, DetailW, colH - 76f);
 
         Refresh(force: true);
     }
