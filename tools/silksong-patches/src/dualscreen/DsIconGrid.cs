@@ -32,6 +32,12 @@ public struct DsItem
     /// <summary>A small count in the corner, e.g. "12". Null for none.</summary>
     public string Badge;
     /// <summary>
+    /// What colour to light this item when it is selected. Null takes the
+    /// game's default glow. Tools set it to their type's colour, which is how
+    /// a red tool lights red -- see InventoryItemTool.CursorColor.
+    /// </summary>
+    public Color? Glow;
+    /// <summary>
     /// Stable identifier, so something outside the grid can select an entry --
     /// tapping a tool socketed in the crest, for instance. Display names would
     /// nearly work and would quietly pick the wrong one for any two items that
@@ -57,11 +63,6 @@ public class DsIconGrid
         public RectTransform Root;
         public Image Icon;
         public TmpText Badge;
-        // The game's own selection cursor: one corner sprite used twice, once
-        // rotated 180 degrees, plus a backdrop glow -- borrowed from
-        // InventoryCursor rather than drawn, so it is filigree and not right
-        // angles. Only two corners are marked; the game's cursor does the same.
-        public Image CornerTL, CornerBR, Glow;
     }
 
     struct Placed
@@ -88,14 +89,23 @@ public class DsIconGrid
     const float HeaderTitleH = 44f;
     const float HeaderRuleH = 52f;
 
-    // Selection brackets. Their centre sits CornerInset inside the cell corner,
-    // so the art reaches CornerSize/2 - CornerInset beyond the cell. Flush, so
-    // that overhang is zero: anything hanging outside the cell is clipped by
-    // the scroll mask on the top row and on both edge columns, which is a
-    // bracket that vanishes in exactly the places it is most needed.
-    const float CornerSize = 46f;
-    const float CornerInset = CornerSize * 0.5f;
-    const float CornerOverhang = CornerSize * 0.5f - CornerInset;
+    // Selection is drawn by ONE cursor that travels, not by brackets switched
+    // on inside the selected cell -- see DsCursor. It lives in the screen's
+    // host rather than in the grid, so it can also land on things beside the
+    // grid: the needle and the mask in the character column are cursor targets
+    // too, and the cursor crosses between them and the icons.
+    //
+    // The cost of leaving the grid is that the grid's scroll mask no longer
+    // clips it, so a selected cell scrolled out of sight would leave its cursor
+    // floating over the column beside it. Paint hides it instead.
+    readonly DsCursor _cursor = new DsCursor();
+    RectTransform _host;
+    // Somewhere other than a cell owns the cursor -- the needle, say. Kept in
+    // host space, already converted by whoever set it.
+    bool _hasExternalTarget;
+    Rect _externalTarget;
+    Color _externalGlow;
+    string _externalKey;
 
     // The count sits in the same corner as the bottom-right bracket, so that
     // one alone is pushed back out far enough to read as a bracket around a
@@ -151,7 +161,6 @@ public class DsIconGrid
     string _selectedKey;
     // Set while something outside the grid owns the detail pane.
     bool _external;
-    bool _cursorApplied;
     bool _dirty;
 
     public string EmptyMessage = "Nothing here yet";
@@ -271,6 +280,19 @@ public class DsIconGrid
         _empty = DsWidgets.Label(_grid, "empty", EmptyMessage, DsTheme.BodySize,
                                  DsTheme.InkFaint, TmpAlign.Center);
         if (_empty != null) DsWidgets.Stretch(_empty.rectTransform);
+
+        // Last, and deliberately so. The cursor belongs to the SCREEN rather
+        // than to the grid -- it has to be able to leave the grid and land on
+        // the needle or the mask beside it -- and its brackets only draw over
+        // the icons if nothing is added to the host after them.
+        //
+        // A tighter inset than the shared default. A tab icon fills its box; a
+        // grid item is art fitted inside a cell with aspect preserved, so there
+        // is usually more air between the icon's box and the ink than the tab
+        // strip has. Its own knob, because the two are judged separately.
+        _host = host;
+        _cursor.CornerInset = DsConfig.Int("cursor_inset_grid_px", 22);
+        _cursor.Build(host);
     }
 
     /// <summary>Replace the contents with a single untitled run.</summary>
@@ -323,6 +345,7 @@ public class DsIconGrid
         {
             if (_flat[i].Key != key) continue;
             _external = false;
+            _hasExternalTarget = false;
             _selected = i;
             _selectedKey = key;
 
@@ -347,6 +370,7 @@ public class DsIconGrid
 
     public void Tick()
     {
+        _cursor.Tick(Time.unscaledDeltaTime);
         if (!_dirty) return;
         _dirty = false;
         Layout();
@@ -366,7 +390,7 @@ public class DsIconGrid
 
         const float sectionGap = 16f;
 
-        float y = CornerOverhang;
+        float y = 0f;
         int flatIndex = 0;
 
         for (int s = 0; s < _sections.Count; s++)
@@ -376,7 +400,7 @@ public class DsIconGrid
 
             if (!string.IsNullOrEmpty(sec.Title))
             {
-                if (y > CornerOverhang) y += sectionGap;
+                if (y > 0f) y += sectionGap;
 
                 // A blank title means "cap only" -- a divider is enough to say
                 // two groups are different without naming them.
@@ -451,13 +475,6 @@ public class DsIconGrid
             DsWidgets.Place(cell.Root, p.X, y, p.W, p.H);
 
             var item = _flat[p.ItemIndex];
-            bool selected = p.ItemIndex == _selected;
-
-            // Selection is the game's own cursor: two corners and a glow.
-            DsWidgets.SetActive(cell.CornerTL, selected);
-            DsWidgets.SetActive(cell.CornerBR, selected);
-            if (cell.Glow != null)
-                cell.Glow.color = selected ? new Color(1f, 0.94f, 0.72f, 0.30f) : Color.clear;
 
             if (item.Icon != null)
             {
@@ -481,36 +498,81 @@ public class DsIconGrid
                 if (show) cell.Badge.text = item.Badge;
             }
         }
+
+        PaintCursor();
+    }
+
+    /// <summary>
+    /// Put the cursor on whatever is selected, in the SCREEN's space.
+    ///
+    /// Run from Paint rather than only on selection, because the target moves
+    /// without the selection changing: the grid scrolls under it. The cursor is
+    /// outside the grid's scroll mask, so a cell that has scrolled out of the
+    /// viewport would otherwise leave its cursor sitting over the next column.
+    /// </summary>
+    void PaintCursor()
+    {
+        if (_hasExternalTarget)
+        {
+            _cursor.MoveTo(_externalTarget, _externalGlow, "ext:" + _externalKey);
+            return;
+        }
+
+        if (_selected < 0 || _selected >= _flat.Count) { _cursor.Hide(); return; }
+
+        for (int i = 0; i < _placed.Count; i++)
+        {
+            var p = _placed[i];
+            if (p.ItemIndex != _selected) continue;
+
+            float y = p.Y - _scroll;
+            // Wholly inside the viewport, not merely touching it: a cursor is
+            // drawn OUTSIDE its cell, so a partly-scrolled one would reach past
+            // the top or bottom of a grid that no longer clips it.
+            if (y < 0f || y + p.H > _gridH) { _cursor.Hide(); return; }
+
+            // The ICON's box, not the cell's. A cell is deliberately larger than
+            // the art it holds -- that padding is the gap between items -- so
+            // bracketing the cell leaves the caret sitting out in the gutter
+            // rather than around the thing it is pointing at.
+            _cursor.MoveTo(new Rect(_gridLeft + p.X + _iconPad, DsTheme.Pad + y + _iconPad,
+                                    p.W - _iconPad * 2f, p.H - _iconPad * 2f),
+                           _flat[_selected].Glow, _selectedKey);
+            return;
+        }
+        _cursor.Hide();
+    }
+
+    /// <summary>
+    /// Hand the cursor to something that is not a grid cell -- the needle in
+    /// the character column, say. Pass a rect in the screen host's space.
+    /// </summary>
+    public void SetExternalTarget(Rect hostRect, Color glow, string key)
+    {
+        _hasExternalTarget = true;
+        _externalTarget = hostRect;
+        _externalGlow = glow;
+        _externalKey = key;
+        PaintCursor();
+    }
+
+    public void ClearExternalTarget()
+    {
+        if (!_hasExternalTarget) return;
+        _hasExternalTarget = false;
+        PaintCursor();
     }
 
     void EnsureCells(int needed)
     {
-        var cursor = DsGameArt.SelectionCursor();
-
-        // Cells built before the game's inventory existed cached a null cursor.
-        // Once the art appears, give it to them.
-        if (cursor.Ok && !_cursorApplied && _cells.Count > 0)
-        {
-            _cursorApplied = true;
-            for (int i = 0; i < _cells.Count; i++)
-            {
-                SetSprite(_cells[i].Glow, cursor.Glow);
-                SetCorner(_cells[i].CornerTL, cursor.Corner);
-                SetCorner(_cells[i].CornerBR, cursor.Corner);
-            }
-        }
-        if (cursor.Ok) _cursorApplied = true;
-
         while (_cells.Count < needed && _cells.Count < 512)
         {
             var root = DsWidgets.Rect(_grid, "cell" + _cells.Count);
 
-            // No cell background. An item is its icon; a grid of tinted squares
-            // reads as a spreadsheet, and the game draws its inventory as bare
-            // art on the panel.
-            var glow = DsWidgets.Icon(root, "glow", cursor.Glow, Color.clear);
-            DsWidgets.Stretch(glow.rectTransform, -_iconPad);
-
+            // No cell background, and no cursor art either. An item is its icon;
+            // a grid of tinted squares reads as a spreadsheet, and the game
+            // draws its inventory as bare art on the panel. The selection is
+            // drawn once, by the cursor that travels -- see DsCursor.
             var icon = DsWidgets.Icon(root, "icon", null, Color.white);
             DsWidgets.Stretch(icon.rectTransform, _iconPad);
 
@@ -518,42 +580,8 @@ public class DsIconGrid
                                         DsTheme.Accent, TmpAlign.BottomRight);
             if (badge != null) DsWidgets.Stretch(badge.rectTransform, 4f);
 
-            // Corners last, so they sit above the icon. The bottom-right is the
-            // same sprite turned 180 degrees, which is how the game does it.
-            var tl = Corner(root, "c-tl", cursor.Corner, new Vector2(0f, 1f), false, CornerInset);
-            var br = Corner(root, "c-br", cursor.Corner, new Vector2(1f, 0f), true,
-                            CornerInset - BadgeClearance);
-
-            _cells.Add(new Cell
-            {
-                Root = root, Icon = icon, Badge = badge, Glow = glow,
-                CornerTL = tl, CornerBR = br,
-            });
+            _cells.Add(new Cell { Root = root, Icon = icon, Badge = badge });
         }
-    }
-
-    // One corner of the game's cursor, anchored to the matching corner of the
-    // cell, as the game's is around an item.
-    static Image Corner(RectTransform parent, string name, Sprite sprite, Vector2 anchor,
-                        bool rotate, float inset)
-    {
-        return DsWidgets.CursorCorner(parent, name, sprite, anchor, rotate, CornerSize, inset);
-    }
-
-    static void SetSprite(Image img, Sprite s)
-    {
-        if (img == null || s == null) return;
-        img.sprite = s;
-        img.preserveAspect = true;
-    }
-
-    // A corner starts transparent so a missing bracket is absent rather than a
-    // grey block; once the real art arrives it has to be made opaque again.
-    static void SetCorner(Image img, Sprite s)
-    {
-        if (img == null || s == null) return;
-        SetSprite(img, s);
-        img.color = Color.white;
     }
 
     void PaintDetail()
@@ -603,6 +631,7 @@ public class DsIconGrid
                 if (hit >= 0)
                 {
                     _external = false;      // the grid takes the pane back
+                    _hasExternalTarget = false;   // ...and the cursor with it
                     _selected = hit;
                     _selectedKey = _flat[hit].Key;
                     Paint();

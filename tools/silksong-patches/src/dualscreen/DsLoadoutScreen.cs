@@ -441,6 +441,10 @@ public class DsLoadoutScreen : IDsScreen
                     Tint = Color.white,
                     Dim = !unlocked,
                     Badge = badge,
+                    // The light behind a selected tool takes the colour of its
+                    // type, the way the game's does -- see
+                    // InventoryItemTool.CursorColor.
+                    Glow = DsTheme.ToolTypeColor(tool.Type),
                 });
             }
         }

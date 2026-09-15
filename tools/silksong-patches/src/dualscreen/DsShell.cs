@@ -25,8 +25,10 @@ public class DsShell
         public InventoryPaneList.PaneTypes Pane;
         public RectTransform Host;
         public RectTransform Tab;
-        public Image TabIcon, CornerTL, CornerBR;
+        public Image TabIcon;
         public TmpText TabLabel;
+        /// <summary>Where the caret sits for this tab, in the tab bar's space.</summary>
+        public Rect CaretRect;
         public bool WarnedMissingIcon;
         public bool Built;
         public bool Broken;
@@ -46,6 +48,9 @@ public class DsShell
     float _nextArtRefresh;
     float _artWaitSince = -1f;
     readonly DsTitleCard _title = new DsTitleCard();
+    // One caret for the strip, which travels between tabs rather than being
+    // switched on inside whichever tab is chosen.
+    readonly DsCursor _tabCursor = new DsCursor();
     // Starts idle. The shell is built before anything is known about whether a
     // save is loaded, and defaulting to a screen meant the panel opened on an
     // empty Inventory and only corrected itself once the idle grace expired.
@@ -227,10 +232,14 @@ public class DsShell
             DsWidgets.Place(art, (bounds.width - size) * 0.5f,
                             (bounds.height - size) * 0.5f, size, size);
             e.TabIcon = DsWidgets.Icon(art, "icon", null, Color.white);
-            e.CornerTL = DsWidgets.CursorCorner(art, "c-tl", null,
-                new Vector2(0f, 1f), false, 48f, 18f);
-            e.CornerBR = DsWidgets.CursorCorner(art, "c-br", null,
-                new Vector2(1f, 0f), true, 48f, 18f);
+
+            // The caret frames the ICON, not the larger box the icon is fitted
+            // inside. Bracketing the box left the brackets sitting well clear of
+            // the art on every tab, because the icon is 88 px inside a 144 px
+            // frame. RefreshTabArt fits the sprite to the same size.
+            float icon = Mathf.Min(88f, bounds.height - 72f);
+            e.CaretRect = new Rect(bounds.x + (bounds.width - icon) * 0.5f,
+                                   (bounds.height - icon) * 0.5f, icon, icon);
 
             string title = "?";
             try { title = e.Screen.Title; } catch { }
@@ -238,6 +247,11 @@ public class DsShell
                                          DsTheme.InkDim, TmpAlign.Center, display: true);
             if (e.TabLabel != null) DsWidgets.Stretch(e.TabLabel.rectTransform);
         }
+
+        // Built after the tabs so its brackets draw over them, and its light
+        // goes at index 1 -- after the strip's opaque black backdrop, which
+        // would otherwise cover it completely.
+        _tabCursor.Build(_tabBar, glowIndex: 1);
     }
 
     void RefreshTabArt()
@@ -248,7 +262,6 @@ public class DsShell
 
         try
         {
-            var cursor = DsGameArt.SelectionCursor();
             foreach (var e in _entries)
             {
                 var sprite = DsGameArt.TabIcon(e.Pane);
@@ -269,7 +282,6 @@ public class DsShell
                     e.WarnedMissingIcon = true;
                     Debug.LogWarning("[DsTabs] " + e.Screen.Id + " icon unavailable; using its label");
                 }
-                e.CornerTL.sprite = e.CornerBR.sprite = cursor.Corner;
             }
             Paint();
         }
@@ -406,17 +418,25 @@ public class DsShell
                 e.TabIcon.color = e.Broken ? DsTheme.InkFaint : on ? Color.white : DsTheme.InkDim;
             if (e.TabLabel != null) e.TabLabel.color = e.Broken ? DsTheme.InkFaint
                                                     : on ? DsTheme.Ink : DsTheme.InkDim;
-            bool caret = on && !e.Broken && e.TabIcon.sprite != null && e.CornerTL.sprite != null;
-            e.CornerTL.color = e.CornerBR.color = Color.white;
-            DsWidgets.SetActive(e.CornerTL, caret);
-            DsWidgets.SetActive(e.CornerBR, caret);
         }
+
+        // The caret goes to the chosen tab, or nowhere if there is not yet an
+        // icon under it to bracket.
+        if (_active >= 0 && _active < _entries.Count)
+        {
+            var e = _entries[_active];
+            bool show = !e.Broken && e.TabIcon != null && e.TabIcon.sprite != null;
+            if (show) _tabCursor.MoveTo(e.CaretRect, null, e.Screen.Id);
+            else _tabCursor.Hide();
+        }
+        else _tabCursor.Hide();
     }
 
     public void Tick(float dt)
     {
         if (_idle) { _title.Tick(); return; }
         RefreshTabArt();
+        _tabCursor.Tick(dt);
         TickSlide(dt);
 
         // The screen sliding OUT is still on screen, so it still gets ticked.

@@ -191,6 +191,13 @@ public static class DsGameArt
     public class Cursor
     {
         public Sprite Corner, Glow;
+        /// <summary>
+        /// InventoryCursor's defaultGlowColor -- the tint it restores whenever
+        /// the thing selected does not ask for one of its own. Taken from the
+        /// live renderer rather than guessed, so the light behind an ordinary
+        /// item is the colour the game lights it.
+        /// </summary>
+        public Color GlowColor = new Color(1f, 0.94f, 0.72f, 0.30f);
         public bool Ok { get { return Corner != null; } }
     }
 
@@ -218,7 +225,11 @@ public static class DsGameArt
 
                 var glow = typeof(InventoryCursor).GetField("backGlow", Priv);
                 var sr = glow != null ? glow.GetValue(c) as SpriteRenderer : null;
-                if (sr != null) _cursor.Glow = sr.sprite;
+                if (sr != null)
+                {
+                    _cursor.Glow = sr.sprite;
+                    _cursor.GlowColor = sr.color;
+                }
 
                 if (_cursor.Ok) break;
             }

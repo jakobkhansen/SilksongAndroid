@@ -75,8 +75,12 @@ public class DsHornetPanel
     float _nextRetry;
     bool _wasInventoryOpen;
 
-    /// <summary>Where taps send their name and description.</summary>
-    public System.Action<string, string> OnSelect;
+    /// <summary>
+    /// Where taps send their name, description, and the rect they occupy in
+    /// LAYOUT space, so the screen's cursor can travel to them the way it
+    /// travels between grid cells.
+    /// </summary>
+    public System.Action<string, string, Rect> OnSelect;
 
     // The ring is tighter than the game's, because the panel is narrower than a
     // 16:9 pane; the core and the mask are larger, because they are the two
@@ -448,7 +452,11 @@ public class DsHornetPanel
         }
         if (best < 0) return false;
 
-        if (OnSelect != null) OnSelect(_hits[best].Name, _hits[best].Desc);
+        if (OnSelect != null)
+        {
+            var h = _hits[best];
+            OnSelect(h.Name, h.Desc, new Rect(h.X, h.Y, h.W, h.H));
+        }
         return true;
     }
 

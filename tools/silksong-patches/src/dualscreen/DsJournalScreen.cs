@@ -45,7 +45,7 @@ public class DsJournalScreen : IDsScreen
     class Cell
     {
         public RectTransform Root;
-        public Image Ring, Art, Glow, CornerTL, CornerBR;
+        public Image Ring, Art;
     }
 
     // Left column: the chooser. Three to a row, small, because their job is to
@@ -54,7 +54,6 @@ public class DsJournalScreen : IDsScreen
     const float ListW = 380f;
     const int   Columns = 3;
     const float CellGap = 14f;
-    const float CornerSize = 46f;
     // How far the clip extends past the list on each side, so a bracket on an
     // outer cell is drawn rather than shaved. See the clip in Build.
     const float CursorBleed = 6f;
@@ -76,6 +75,9 @@ public class DsJournalScreen : IDsScreen
 
     readonly List<Entry> _entries = new List<Entry>();
     readonly List<Cell> _cells = new List<Cell>();
+    // One cursor for the chooser, with its brackets pulled in along the
+    // diagonal to sit against the circular portraits rather than their boxes.
+    readonly DsCursor _cursor = new DsCursor();
 
     RectTransform _host, _list, _portraitBox, _detail;
     Image _portrait;
@@ -160,6 +162,12 @@ public class DsJournalScreen : IDsScreen
         if (_desc != null)
             DsWidgets.Place(_desc.rectTransform, 0f, 68f, DetailW, colH - 76f);
 
+        // Last, so the brackets draw over the portraits. Half of 1 - 1/sqrt2:
+        // the diagonal gap of a circle inscribed in its cell, split across the
+        // two axes.
+        _cursor.CornerInset = _cell * 0.1465f;
+        _cursor.Build(host);
+
         Refresh(force: true);
     }
 
@@ -168,6 +176,9 @@ public class DsJournalScreen : IDsScreen
 
     public void Tick(float dt)
     {
+        // Before the refresh gate: the cursor animates every frame, and the
+        // data is only re-read once a second.
+        _cursor.Tick(dt);
         if (Time.unscaledTime < _nextRefresh) return;
         _nextRefresh = Time.unscaledTime + 1f;
         Refresh(force: false);
@@ -322,11 +333,6 @@ public class DsJournalScreen : IDsScreen
     Cell MakeCell(int index)
     {
         var root = DsWidgets.Rect(_list, "cell" + index);
-        var cursor = DsGameArt.SelectionCursor();
-
-        // The glow sits behind everything, as it does in the game's own cursor.
-        var glow = DsWidgets.Icon(root, "glow", cursor.Glow, Color.clear);
-        DsWidgets.Place(glow.rectTransform, -8f, -8f, _cell + 16f, _cell + 16f);
 
         var ring = DsWidgets.Circle(root, "ring", DsTheme.PanelEdge);
         DsWidgets.Place(ring.rectTransform, 0f, 0f, _cell, _cell);
@@ -357,40 +363,7 @@ public class DsJournalScreen : IDsScreen
         // Anchored to the RING rather than to the cell. That mattered when the
         // cell was taller than the circle by a caption; it is kept because the
         // ring is what the bracket is framing either way.
-        var tl = Corner(ring.rectTransform, "c-tl", cursor.Corner, new Vector2(0f, 1f), false);
-        var br = Corner(ring.rectTransform, "c-br", cursor.Corner, new Vector2(1f, 0f), true);
-
-        return new Cell
-        {
-            Root = root, Ring = ring, Art = art,
-            Glow = glow, CornerTL = tl, CornerBR = br,
-        };
-    }
-
-    // One corner of the cursor, anchored to the matching corner of the circle's
-    // bounding box -- and then pulled in along the diagonal, because that box
-    // is not where the art is.
-    //
-    // A circle inscribed in a square leaves its corners empty: the nearest ink
-    // is r(1 - 1/sqrt2), about 0.29r, further in than the corner. Insetting by
-    // a fraction of the bracket's own size took no account of that and left the
-    // brackets floating off the picture at every icon size. Insetting by the
-    // circle's geometry instead is what makes them sit tight against it.
-    static Image Corner(RectTransform parent, string name, Sprite sprite, Vector2 anchor, bool rotate)
-    {
-        var img = DsWidgets.Icon(parent, name, sprite, Color.white);
-        var rt = img.rectTransform;
-        rt.anchorMin = rt.anchorMax = anchor;
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.sizeDelta = new Vector2(CornerSize, CornerSize);
-        // Half of 1 - 1/sqrt2, i.e. the diagonal gap split across the two axes.
-        float inset = parent.rect.width * 0.1465f;
-        rt.anchoredPosition = new Vector2(anchor.x < 0.5f ? inset : -inset,
-                                          anchor.y < 0.5f ? inset : -inset);
-        if (rotate) rt.localRotation = Quaternion.Euler(0f, 0f, 180f);
-        img.preserveAspect = true;
-        img.gameObject.SetActive(false);
-        return img;
+        return new Cell { Root = root, Ring = ring, Art = art };
     }
 
     void Paint()
@@ -401,17 +374,29 @@ public class DsJournalScreen : IDsScreen
             float x = col * (_cell + CellGap);
             float y = row * (_cellH + CellGap) - _scroll;
             DsWidgets.Place(_cells[i].Root, x, y, _cell, _cellH);
-
-            bool selected = i == _selected;
-            var c = _cells[i];
-
-            // Selection is the game's cursor, not a colour: the ring stays the
-            // frame it always was.
-            DsWidgets.SetActive(c.CornerTL, selected);
-            DsWidgets.SetActive(c.CornerBR, selected);
-            if (c.Glow != null)
-                c.Glow.color = selected ? new Color(1f, 0.94f, 0.72f, 0.30f) : Color.clear;
         }
+
+        PaintCursor();
+    }
+
+    // Selection is the game's cursor, not a colour: the ring stays the frame it
+    // always was. One cursor travels between the portraits rather than a pair of
+    // brackets being switched on inside the chosen one.
+    //
+    // It lives in the host rather than in the scrolling list, so the list's mask
+    // no longer clips it; a portrait scrolled out of the viewport therefore has
+    // to have its cursor hidden explicitly.
+    void PaintCursor()
+    {
+        if (_selected < 0 || _selected >= _entries.Count) { _cursor.Hide(); return; }
+
+        int col = _selected % Columns, row = _selected / Columns;
+        float x = col * (_cell + CellGap);
+        float y = row * (_cellH + CellGap) - _scroll;
+        if (y < 0f || y + _cell > _listH) { _cursor.Hide(); return; }
+
+        _cursor.MoveTo(new Rect(ListX + x, _listTop + y, _cell, _cell),
+                       null, _entries[_selected].Name);
     }
 
     void PaintDetail()

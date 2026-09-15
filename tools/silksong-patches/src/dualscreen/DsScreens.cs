@@ -228,8 +228,17 @@ public class DsInventoryScreen : DsGridScreen
         DsWidgets.VRule(host, "split-detail", (GridX + GridW + DetailX) * 0.5f,
                         DsTheme.Pad, colH);
 
-        // Both halves explain themselves in the same place.
-        _hornet.OnSelect = (name, desc) => Grid.ShowDetail(name, desc);
+        // Both halves explain themselves in the same place, and the one cursor
+        // crosses between them: tapping the needle walks it out of the grid and
+        // over to the character column.
+        _hornet.OnSelect = (name, desc, layoutRect) =>
+        {
+            Grid.ShowDetail(name, desc);
+            float bodyY = DsLayout.Current.Body.y;
+            Grid.SetExternalTarget(
+                new Rect(layoutRect.x, layoutRect.y - bodyY, layoutRect.width, layoutRect.height),
+                DsGameArt.SelectionCursor().GlowColor, name);
+        };
         base.Build(host);
     }
 
