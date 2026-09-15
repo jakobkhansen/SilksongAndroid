@@ -94,7 +94,12 @@ public class DsShell
         var strip = DsWidgets.Box(_tabBar, "tab-bg", DsTheme.Ground);
         DsWidgets.Stretch(strip.rectTransform);
 
-        DsWidgets.HRule(_tabBar, "rule", DsTheme.Pad, 0f, _w - DsTheme.Pad * 2f);
+        // No rule above the tabs. The icons are already separated from the
+        // content by the band of black they sit in, and a second line there
+        // boxed the body in: with a rule under the HUD as well, the content
+        // read as a panel with a frame rather than as the page it is. The
+        // rule under the HUD stays, because that one divides two DIFFERENT
+        // things -- what you are, and what you are looking at.
 
         // Built last so it covers everything, because that is exactly its job:
         // outside a save there is no screen worth showing and no tab worth

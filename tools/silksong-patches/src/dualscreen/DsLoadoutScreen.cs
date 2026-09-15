@@ -110,9 +110,11 @@ public class DsLoadoutScreen : IDsScreen
 
         // ── centre: the tools; right: what the selected one does ───────────
         // The detail pane takes no rule across its top -- the gutter rule
-        // beside it is already the boundary.
+        // beside it is already the boundary. The section caps reach back half a
+        // gutter so they sit on the rule between the crest and the tools.
         _grid.Build(host, ListColumns, ListX, ListW,
-                    new Rect(DetailX, 16f, DetailW, colH), detailRule: false);
+                    new Rect(DetailX, 16f, DetailW, colH), detailRule: false,
+                    capReach: ListX - (LeftX + LeftW + ListX) * 0.5f);
 
         Refresh(force: true);
     }

@@ -140,6 +140,8 @@ public class DsIconGrid
     // too much air around it. A fraction keeps the art the same share of its cell
     // at any column width.
     float _iconPad;
+    // How far left of the column the section cap reaches, to meet the gutter rule.
+    float _capReach;
     // The grid's rectangle in LAYOUT space (top-left origin), kept because hit
     // testing is arithmetic in that space rather than a RectTransform query.
     float _gridLeft, _gridTop, _gridW, _gridH;
@@ -174,11 +176,23 @@ public class DsIconGrid
     /// horizontal rule here would be a second line across the top of a column
     /// that nothing sits above.
     /// </param>
+    /// <param name="capReach">
+    /// How far LEFT of the column the section cap reaches, so its tick lands on
+    /// the gutter rule instead of floating in the column beside it.
+    ///
+    /// The cap is the junction between a group boundary and the column boundary,
+    /// and it only reads as one if the two actually meet; drawn flush with the
+    /// icons it looked like a stray mark. The grid cannot work this out for
+    /// itself -- where the gutter rule runs is the screen's business, not the
+    /// grid's -- so the screen passes the distance. Zero means "draw it inside
+    /// the column", which is right for a grid with no rule beside it.
+    /// </param>
     public void Build(RectTransform host, int columns,
                       float left = -1f, float width = -1f, Rect detail = default(Rect),
-                      bool detailRule = true)
+                      bool detailRule = true, float capReach = 0f)
     {
         _columns = Mathf.Max(1, columns);
+        _capReach = Mathf.Max(0f, capReach);
 
         var layout = DsLayout.Current;
         float panelW = layout.Width;
@@ -203,13 +217,18 @@ public class DsIconGrid
         // the top would draw over the tab strip. The clip is a rect of its own,
         // grown by CursorBleed, so a selection bracket that reaches outside its
         // cell is still drawn -- see the note there.
+        //
+        // The left side is grown by whichever is larger, the bracket's overhang
+        // or the section cap's reach. Sizing it to the bracket alone is what cut
+        // the cap off short of the gutter rule it is supposed to touch.
+        float leftBleed = Mathf.Max(CursorBleed, _capReach);
         var clip = DsWidgets.Rect(host, "grid-clip");
-        DsWidgets.Place(clip, left - CursorBleed, DsTheme.Pad - CursorBleed,
-                        _gridW + CursorBleed * 2f, _gridH + CursorBleed * 2f);
+        DsWidgets.Place(clip, left - leftBleed, DsTheme.Pad - CursorBleed,
+                        _gridW + leftBleed + CursorBleed, _gridH + CursorBleed * 2f);
         clip.gameObject.AddComponent<RectMask2D>();
 
         _grid = DsWidgets.Rect(clip, "grid");
-        DsWidgets.Place(_grid, CursorBleed, CursorBleed, _gridW, _gridH);
+        DsWidgets.Place(_grid, leftBleed, CursorBleed, _gridW, _gridH);
 
         // A rule above the description, not a box around it. This pane is the
         // bottom of a column and its top edge is the only side that actually
@@ -374,9 +393,11 @@ public class DsIconGrid
                     if (label != null) DsWidgets.Place(label.rectTransform, 4f, 0f, 340f, 38f);
                 }
 
-                DsWidgets.SectionRule(head, "rule", 4f,
+                // Starts on the gutter rule, not inside the column, so the cap's
+                // tick meets the line it belongs to. The label stays inside.
+                DsWidgets.SectionRule(head, "rule", -_capReach,
                                       (titled ? HeaderTitleH : 0f) + HeaderRuleH * 0.5f,
-                                      _gridW - 8f, sec.Colour);
+                                      _gridW + _capReach, sec.Colour);
 
                 _headers.Add(head);
                 _headerY.Add(y);

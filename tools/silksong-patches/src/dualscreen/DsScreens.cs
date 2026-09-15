@@ -50,11 +50,16 @@ public abstract class DsGridScreen : IDsScreen
     /// full-height column of its own, whose boundary runs down the gutter.
     /// </summary>
     protected virtual bool DetailRule => true;
+    /// <summary>
+    /// How far left of the grid the section cap reaches, to meet the gutter rule.
+    /// Zero for a grid with no rule beside it.
+    /// </summary>
+    protected virtual float CapReach => 0f;
 
     public virtual void Build(RectTransform host)
     {
         Grid.EmptyMessage = EmptyMessage;
-        Grid.Build(host, Columns, GridLeft, GridWidth, DetailRect, DetailRule);
+        Grid.Build(host, Columns, GridLeft, GridWidth, DetailRect, DetailRule, CapReach);
         Refresh();
     }
 
@@ -188,6 +193,11 @@ public class DsInventoryScreen : DsGridScreen
     // A column, not the bottom of one: the gutter rule beside it is already the
     // boundary, so it takes no rule across its top.
     protected override bool DetailRule => false;
+
+    // Half the gutter, which is how far the section cap has to reach left to sit
+    // on the rule running down it. Derived, so moving a column cannot leave the
+    // cap hanging in mid-air.
+    protected override float CapReach => GridX - (LeftX + LeftW + GridX) * 0.5f;
 
     protected override Rect DetailRect =>
         new Rect(DetailX, DsTheme.Pad, DetailW,
