@@ -54,6 +54,36 @@ public class DsShell
     bool _idle = true;
     int _active = -1;
 
+    // ── the slide ───────────────────────────────────────────────────────────
+    //
+    // Switching tabs moves the content sideways in the direction the tab strip
+    // says: pick a tab to the LEFT of the current one and the new screen comes
+    // in from the left, pick one to the right and it comes in from the right.
+    // Both screens are alive for the length of it, which is what makes it read
+    // as one strip of pages moving rather than as a cut between two.
+    //
+    // The body already has a RectMask2D, so a screen shifted out of the body's
+    // rect is clipped for free and nothing is needed to hide it.
+    //
+    // Duration is a knob rather than a constant, because this is exactly the
+    // kind of thing that wants trying at several speeds on the device, and the
+    // dev loop for a rebuild is about ten minutes. Zero turns it off.
+    //
+    // Snappy on purpose. This is a tab switch, not a page turn: the slide is
+    // there to say WHICH WAY you moved along the strip, and once that has been
+    // said the player is waiting. 150 undersold it -- the movement was over
+    // before the eye had followed it, which reads as a flicker rather than as a
+    // direction. 300 is long enough to be seen and short enough not to be sat
+    // through, and with the ease-out most of the distance is still covered in
+    // the first half of it.
+    readonly float _slideSeconds =
+        Mathf.Clamp(DsConfig.Int("tab_slide_ms", 300), 0, 2000) / 1000f;
+    int _slideFrom = -1;
+    float _slideT;
+    float _slideDir;
+
+    bool Sliding => _slideFrom >= 0;
+
     public DsShell(RectTransform root)
     {
         _root = root;
@@ -128,6 +158,10 @@ public class DsShell
         if (idle == _idle) return;
         _idle = idle;
         _gestures.Reset();
+
+        // A slide caught by the title card would resume against hosts that are
+        // no longer on screen, and leave one shifted when it came back.
+        EndSlide();
 
         _tabBar.gameObject.SetActive(!idle);
         _body.gameObject.SetActive(!idle);
@@ -250,13 +284,12 @@ public class DsShell
         if (index < 0 || index >= _entries.Count) return;
         if (index == _active) return;
 
-        if (_active >= 0 && _active < _entries.Count)
-        {
-            var prev = _entries[_active];
-            prev.Host.gameObject.SetActive(false);
-            Guard(prev, () => prev.Screen.OnHide());
-        }
+        // A switch made DURING a slide settles the one in flight first, so two
+        // slides can never be moving the same hosts in opposite directions.
+        // Tapping along the tab strip quickly is a normal thing to do.
+        EndSlide();
 
+        int from = _active;
         _active = index;
         var e = _entries[index];
 
@@ -270,7 +303,79 @@ public class DsShell
 
         e.Host.gameObject.SetActive(true);
         Guard(e, () => e.Screen.OnShow());
+
+        bool canSlide = _slideSeconds > 0f && from >= 0 && from < _entries.Count
+                        && !e.Broken && !_entries[from].Broken;
+        if (canSlide)
+        {
+            // The outgoing screen keeps its host active and is hidden at the
+            // END of the slide, not now -- it has to stay on screen to be the
+            // thing sliding off.
+            _slideFrom = from;
+            _slideT = 0f;
+            _slideDir = index > from ? 1f : -1f;
+            Shift(e.Host, _slideDir * _w);
+            Shift(_entries[from].Host, 0f);
+        }
+        else if (from >= 0 && from < _entries.Count)
+        {
+            var prev = _entries[from];
+            Shift(prev.Host, 0f);
+            prev.Host.gameObject.SetActive(false);
+            Guard(prev, () => prev.Screen.OnHide());
+        }
+
         Paint();
+    }
+
+    /// <summary>
+    /// Move a screen's host sideways within the body.
+    ///
+    /// Both offsets, not anchoredPosition: the hosts are stretched to the body,
+    /// and for a stretched rect the offsets ARE its edges. Shifting both by the
+    /// same amount translates it and leaves its size alone.
+    /// </summary>
+    static void Shift(RectTransform host, float dx)
+    {
+        if (host == null) return;
+        host.offsetMin = new Vector2(dx, 0f);
+        host.offsetMax = new Vector2(dx, 0f);
+    }
+
+    void TickSlide(float dt)
+    {
+        if (!Sliding) return;
+
+        _slideT += dt / Mathf.Max(0.001f, _slideSeconds);
+        if (_slideT >= 1f) { EndSlide(); return; }
+
+        // Ease out. A linear slide reads as mechanical at this distance and
+        // this duration; arriving slowly is what makes it feel like paper.
+        float k = 1f - Mathf.Pow(1f - _slideT, 3f);
+
+        if (_active >= 0 && _active < _entries.Count)
+            Shift(_entries[_active].Host, (1f - k) * _slideDir * _w);
+        if (_slideFrom >= 0 && _slideFrom < _entries.Count)
+            Shift(_entries[_slideFrom].Host, -k * _slideDir * _w);
+    }
+
+    /// <summary>Put both screens where the slide was going to leave them.</summary>
+    void EndSlide()
+    {
+        if (!Sliding) return;
+
+        int from = _slideFrom;
+        _slideFrom = -1;
+
+        if (from >= 0 && from < _entries.Count)
+        {
+            var prev = _entries[from];
+            Shift(prev.Host, 0f);
+            prev.Host.gameObject.SetActive(false);
+            Guard(prev, () => prev.Screen.OnHide());
+        }
+        if (_active >= 0 && _active < _entries.Count)
+            Shift(_entries[_active].Host, 0f);
     }
 
     public void Next(int direction)
@@ -312,6 +417,22 @@ public class DsShell
     {
         if (_idle) { _title.Tick(); return; }
         RefreshTabArt();
+        TickSlide(dt);
+
+        // The screen sliding OUT is still on screen, so it still gets ticked.
+        //
+        // Not ticking it is nearly invisible for a screen made of static rects,
+        // and very visible for the Map: its panel is a RawImage over a render
+        // texture that only holds a picture for as long as the view is being
+        // driven, so a map that stopped ticking went stale part-way across
+        // instead of sliding off. Anything that draws live has the same
+        // problem, so the fix belongs here rather than in the map.
+        if (Sliding && _slideFrom >= 0 && _slideFrom < _entries.Count)
+        {
+            var going = _entries[_slideFrom];
+            if (!going.Broken) Guard(going, () => going.Screen.Tick(dt));
+        }
+
         if (_active < 0 || _active >= _entries.Count) return;
         var e = _entries[_active];
         if (e.Broken) return;
@@ -331,6 +452,13 @@ public class DsShell
             return;
         }
         if (target != DsGestureTarget.Body) return;
+
+        // Not while the content is moving. Every screen hit-tests against the
+        // rectangles it was LAID OUT at, so a tap part-way through a slide
+        // lands on whatever is nominally at that point rather than on what the
+        // player can see there. Tabs still work, so a slide can be cut short
+        // by picking another one.
+        if (Sliding) return;
 
         if (_active < 0 || _active >= _entries.Count) return;
         var e = _entries[_active];
