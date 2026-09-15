@@ -185,7 +185,17 @@ public class DsInventoryScreen : DsGridScreen
 
     public override string Id => "inventory";
     public override string Title => "INVENTORY";
-    protected override int Columns => 4;
+    // Three across, agreed with the designer. In a 400 px column that is a
+    // 127 px cell against four's 92, which is both what the art wants and a
+    // comfortable thumb target -- four came to about 7 mm on this panel.
+    //
+    // Three also means the collection no longer fits: seven relics and the
+    // consumables below them run past the bottom of the column. That is the
+    // intended shape rather than a problem to design around -- the grid is a
+    // scrolling one (DsIconGrid owns the same drag-to-scroll the Journal and
+    // Tasks lists use), and it was only ever incidental that the old wider
+    // layout happened to fit everything at once.
+    protected override int Columns => 3;
     protected override string EmptyMessage => "Nothing collected yet";
     protected override float GridLeft => GridX;
     protected override float GridWidth => GridW;
