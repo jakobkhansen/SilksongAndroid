@@ -95,7 +95,7 @@ public static class DsWidgets
     /// <summary>A rule across a boundary. <paramref name="y"/> is its centre line.</summary>
     public static RectTransform HRule(Transform parent, string name, float x, float y, float length)
     {
-        var rt = Box(parent, name, DsTheme.Rule).rectTransform;
+        var rt = RuleImage(parent, name, DsRuleArt.Horizontal).rectTransform;
         Place(rt, x, y - DsTheme.RuleThickness * 0.5f, length, DsTheme.RuleThickness);
         return rt;
     }
@@ -103,9 +103,61 @@ public static class DsWidgets
     /// <summary>A rule down a gutter. <paramref name="x"/> is its centre line.</summary>
     public static RectTransform VRule(Transform parent, string name, float x, float y, float length)
     {
-        var rt = Box(parent, name, DsTheme.Rule).rectTransform;
+        var rt = RuleImage(parent, name, DsRuleArt.Vertical).rectTransform;
         Place(rt, x - DsTheme.RuleThickness * 0.5f, y, DsTheme.RuleThickness, length);
         return rt;
+    }
+
+    /// <summary>
+    /// The cap that marks a group inside a grid. <paramref name="y"/> is the
+    /// line it leaves from, not the top of the art.
+    ///
+    /// Drawn at its own size and never stretched: the cap is a vertical tick
+    /// with a stroke trailing off it, and stretching would smear the tick into
+    /// a bar. It is only ever shrunk, and then in proportion, for a column too
+    /// narrow to seat it.
+    /// </summary>
+    public static RectTransform SectionRule(Transform parent, string name, float x, float y,
+                                            float maxLength, Color color)
+    {
+        var art = DsRuleArt.Section;
+        if (art == null)
+        {
+            // What this screen drew before the art existed.
+            var plain = Box(parent, name, color).rectTransform;
+            Place(plain, x, y - DsTheme.RuleThickness * 0.5f, maxLength, DsTheme.RuleThickness);
+            return plain;
+        }
+
+        float w = Mathf.Min(DsRuleArt.SectionW, maxLength);
+        float h = DsRuleArt.SectionH * (w / DsRuleArt.SectionW);
+        var rt = RuleImage(parent, name, art, color).rectTransform;
+        Place(rt, x, y - h * (DsRuleArt.SectionLine / DsRuleArt.SectionH), w, h);
+        return rt;
+    }
+
+    /// <summary>
+    /// A rule's Image, drawn as a plain stretched quad.
+    ///
+    /// useSpriteMesh is deliberately OFF, where DsWidgets.Icon has it on. A tight
+    /// sprite mesh samples only the drawn geometry, which is right for an atlas
+    /// icon and wrong here: these lines are mostly transparent by design, and a
+    /// trimmed mesh would crop away the very taper that is the decoration.
+    /// </summary>
+    static Image RuleImage(Transform parent, string name, Sprite art, Color? tint = null)
+    {
+        var rt = Rect(parent, name);
+        var img = rt.gameObject.AddComponent<Image>();
+        img.type = Image.Type.Simple;
+        img.useSpriteMesh = false;
+        img.preserveAspect = false;
+        img.sprite = art ?? DsTheme.White;
+        // The art is pure white with the shape carried entirely in its alpha, so
+        // the panel's own bone tint still applies and the rules stay the colour
+        // the rest of the UI is.
+        img.color = tint ?? DsTheme.Rule;
+        img.raycastTarget = false;
+        return img;
     }
 
     /// <summary>

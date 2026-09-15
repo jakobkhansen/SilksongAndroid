@@ -180,10 +180,7 @@ public class DsInventoryScreen : DsGridScreen
 
     public override string Id => "inventory";
     public override string Title => "INVENTORY";
-    // Three across, not four. In a 400 px column four cells are 92 px, which is
-    // under 7 mm on this panel -- smaller than a fingertip and smaller than the
-    // art wants. Three gives 127 px and the icons room to be recognised.
-    protected override int Columns => 3;
+    protected override int Columns => 4;
     protected override string EmptyMessage => "Nothing collected yet";
     protected override float GridLeft => GridX;
     protected override float GridWidth => GridW;

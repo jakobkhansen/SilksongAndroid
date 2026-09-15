@@ -79,7 +79,14 @@ public class DsIconGrid
     // while the icons moved underneath them.
     readonly List<RectTransform> _headers = new List<RectTransform>();
     readonly List<float> _headerY = new List<float>();
-    const float HeaderH = 54f;
+    // Headers are no longer all one height. The section cap is 43 px of art, and
+    // a group that also carries a caps title needs room for both; one that does
+    // not -- the Inventory's consumables, which the game leaves unnamed too --
+    // needs only the cap. Sizing every header for the worst case put a band of
+    // dead space above half the groups on the panel with the least to spare.
+    readonly List<float> _headerH = new List<float>();
+    const float HeaderTitleH = 44f;
+    const float HeaderRuleH = 52f;
 
     // Selection brackets. Their centre sits CornerInset inside the cell corner,
     // so the art reaches CornerSize/2 - CornerInset beyond the cell. Flush, so
@@ -126,6 +133,13 @@ public class DsIconGrid
 
     int _columns;
     float _cell, _gap;
+    // How far the art is inset inside its cell. Proportional, not the flat 10 px
+    // it used to be: against the old 157 px cell that was 13% of it, but the
+    // same 10 px in a 92 px cell is 22%, so narrowing the column shrank the ICONS
+    // half again as much as it shrank the cells and the grid read as small with
+    // too much air around it. A fraction keeps the art the same share of its cell
+    // at any column width.
+    float _iconPad;
     // The grid's rectangle in LAYOUT space (top-left origin), kept because hit
     // testing is arithmetic in that space rather than a RectTransform query.
     float _gridLeft, _gridTop, _gridW, _gridH;
@@ -178,6 +192,7 @@ public class DsIconGrid
 
         _gap = 10f;
         _cell = (width - _gap * (_columns - 1)) / _columns;
+        _iconPad = Mathf.Max(3f, _cell * 0.06f);
 
         _gridLeft = left;
         _gridTop = layout.Body.y + DsTheme.Pad;
@@ -327,6 +342,7 @@ public class DsIconGrid
             if (_headers[i] != null) Object.Destroy(_headers[i].gameObject);
         _headers.Clear();
         _headerY.Clear();
+        _headerH.Clear();
         _placed.Clear();
 
         const float sectionGap = 16f;
@@ -342,24 +358,30 @@ public class DsIconGrid
             if (!string.IsNullOrEmpty(sec.Title))
             {
                 if (y > CornerOverhang) y += sectionGap;
-                var head = DsWidgets.Rect(_grid, "head" + s);
-                DsWidgets.Place(head, 0f, y, _gridW, HeaderH);
 
-                // A blank title means "rule only" -- a divider is enough to say
+                // A blank title means "cap only" -- a divider is enough to say
                 // two groups are different without naming them.
-                if (sec.Title.Trim().Length > 0)
+                bool titled = sec.Title.Trim().Length > 0;
+                float headH = (titled ? HeaderTitleH : 0f) + HeaderRuleH;
+
+                var head = DsWidgets.Rect(_grid, "head" + s);
+                DsWidgets.Place(head, 0f, y, _gridW, headH);
+
+                if (titled)
                 {
                     var label = DsWidgets.Label(head, "t", sec.Title, DsTheme.BodySize,
                                                 sec.Colour, TmpAlign.Left, display: true);
                     if (label != null) DsWidgets.Place(label.rectTransform, 4f, 0f, 340f, 38f);
                 }
 
-                var rule = DsWidgets.Box(head, "rule", sec.Colour).rectTransform;
-                DsWidgets.Place(rule, 4f, HeaderH - 12f, _gridW - 8f, 2f);
+                DsWidgets.SectionRule(head, "rule", 4f,
+                                      (titled ? HeaderTitleH : 0f) + HeaderRuleH * 0.5f,
+                                      _gridW - 8f, sec.Colour);
 
                 _headers.Add(head);
                 _headerY.Add(y);
-                y += HeaderH;
+                _headerH.Add(headH);
+                y += headH;
             }
 
             for (int i = 0; i < sec.Items.Count; i++, flatIndex++)
@@ -388,9 +410,10 @@ public class DsIconGrid
             var h = _headers[i];
             if (h == null) continue;
             float hy = _headerY[i] - _scroll;
-            bool vis = hy + HeaderH > 0f && hy < _gridH;
+            float hh = _headerH[i];
+            bool vis = hy + hh > 0f && hy < _gridH;
             if (h.gameObject.activeSelf != vis) h.gameObject.SetActive(vis);
-            if (vis) DsWidgets.Place(h, 0f, hy, _gridW, HeaderH);
+            if (vis) DsWidgets.Place(h, 0f, hy, _gridW, hh);
         }
 
         for (int i = 0; i < _cells.Count; i++)
@@ -465,10 +488,10 @@ public class DsIconGrid
             // reads as a spreadsheet, and the game draws its inventory as bare
             // art on the panel.
             var glow = DsWidgets.Icon(root, "glow", cursor.Glow, Color.clear);
-            DsWidgets.Stretch(glow.rectTransform, -10f);
+            DsWidgets.Stretch(glow.rectTransform, -_iconPad);
 
             var icon = DsWidgets.Icon(root, "icon", null, Color.white);
-            DsWidgets.Stretch(icon.rectTransform, 10f);
+            DsWidgets.Stretch(icon.rectTransform, _iconPad);
 
             var badge = DsWidgets.Label(root, "badge", "", DsTheme.SmallSize,
                                         DsTheme.Accent, TmpAlign.BottomRight);
