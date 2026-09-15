@@ -117,13 +117,34 @@ with the carets around them if possible.
 
 ## Tab contents
 
-Every tab should be reworked to follow the contents of the screenshots. We don't have the
-dividers yet from our designer, so we can keep using the white lines we have.
+Every tab should be reworked to follow the contents of the screenshots.
 
 On the crest tab, we need to rotate the two extra tools on the bottom to fix them in.
 Ignore the icons being rotated in the screenshot, they should still be upright. Also
 disregard the "unequip skills" button text, this menu is not interactable with the
 controller, only touch.
+
+### Dividers
+
+The designer's dividers are in, replacing the plain white lines. The art is in
+`docs/dividers/` and embedded in `DsRuleArt` as base64, because the patches are compiled
+on the device from source and have no asset pipeline to read a file through; all three
+together are under two kilobytes.
+
+The ends **are** the decoration. Both hairlines are fully opaque only across their middle
+45% and ramp to alpha 0 at each tip, and both are authored at very near their final size
+(1100 and 608, against rules of ~1200 and ~624). They are therefore stretched whole rather
+than nine-sliced — the taper scales with the line, so a short rule reads as a short rule
+instead of a long one with its ends cut off.
+
+`Inventory Divider` is not a rule but an **end cap**: a vertical tick down the far left
+with a stroke leaving it at mid-height and fading out to the right. It is drawn at its own
+size and never stretched, and it marks the groups inside an icon grid.
+
+Every rule on the panel goes through `DsWidgets.HRule`/`VRule`, so the HUD rule, the
+tab-strip rule, the column gutters and the Tasks dividers all take the art without those
+screens changing. Each accessor may return null and the widgets fall back to the plain box
+rule.
 
 ### Three columns
 
