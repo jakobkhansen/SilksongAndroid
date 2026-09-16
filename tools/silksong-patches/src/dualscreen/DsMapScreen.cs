@@ -136,6 +136,19 @@ public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle
         if (_noMapText != null)
             DsWidgets.Place(_noMapText.rectTransform, 0f, h * 0.5f + SymbolSize * 0.55f, w, 60f);
 
+        // Last, so it lies over the map and the No-Map symbol alike: the map is
+        // a picture with hard edges on all four sides, and it ends against the
+        // panel's black in a straight cut. A narrow fade takes the cut off
+        // every edge and corner without dimming anything the player is reading
+        // -- see DsTheme.EdgeFade for why it is sliced and why the ramp is
+        // cubed rather than linear.
+        var fade = DsWidgets.Icon(_mapPanel, "edge-fade", DsTheme.EdgeFade, Color.white);
+        fade.type = Image.Type.Sliced;
+        fade.useSpriteMesh = false;
+        fade.preserveAspect = false;
+        fade.raycastTarget = false;
+        DsWidgets.Stretch(fade.rectTransform);
+
         Apply(State.Idle, force: true);
     }
 

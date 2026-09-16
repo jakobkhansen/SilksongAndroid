@@ -380,6 +380,56 @@ public static class DsTheme
         }
     }
 
+    static Sprite _edgeFade;
+
+    /// <summary>
+    /// A transparent rectangle with its outer edge fading to black, generated
+    /// once and nine-sliced.
+    ///
+    /// Drawn over the map so it does not end on a hard rectangular cut. Sliced
+    /// rather than stretched for the same reason the button plates are: the
+    /// fade has to be the SAME WIDTH on every edge, and a stretched gradient
+    /// would be as wide as the panel is on two sides and as tall as it is on
+    /// the other two. The middle region is fully transparent, so all the
+    /// stretching happens where there is nothing to distort.
+    ///
+    /// The curve matters as much as the width. A linear ramp reads as a grey
+    /// haze creeping a long way in; raising it to a power keeps almost the
+    /// whole band clear and turns to black only in the last few pixels, which
+    /// is what "fade at the edge" actually looks like.
+    /// </summary>
+    public static Sprite EdgeFade
+    {
+        get
+        {
+            if (_edgeFade != null) return _edgeFade;
+            const int fade = 40;
+            const int size = fade * 2 + 2;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { name = "DsEdgeFade" };
+            var px = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    int d = Mathf.Min(Mathf.Min(x, y), Mathf.Min(size - 1 - x, size - 1 - y));
+                    float t = Mathf.Clamp01(1f - d / (float)fade);
+                    float a = Mathf.Pow(t, 3f);
+                    px[y * size + x] = new Color32(0, 0, 0, (byte)(a * 255f));
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.hideFlags = HideFlags.HideAndDontSave;
+            _edgeFade = Sprite.Create(tex, new UnityEngine.Rect(0, 0, size, size),
+                                      new Vector2(0.5f, 0.5f), 100f, 0,
+                                      SpriteMeshType.FullRect,
+                                      new Vector4(fade, fade, fade, fade));
+            _edgeFade.hideFlags = HideFlags.HideAndDontSave;
+            return _edgeFade;
+        }
+    }
+
     public static Sprite FindSprite(string name)
     {
         Sprite found;
