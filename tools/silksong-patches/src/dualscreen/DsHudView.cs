@@ -500,6 +500,32 @@ public sealed class DsHudView : MonoBehaviour
         image.color = Color.clear;
         DsWidgets.SetActive(image, false);
     }
+    /// <summary>
+    /// The space beside the silk bar, in panel pixels, or a zero-width rect
+    /// while the HUD is not drawn.
+    ///
+    /// This is the room the tools used to occupy, and it is where the designs
+    /// put the screen's title. The shell asks rather than assuming, because
+    /// where the silk bar ends depends on the player's maximum silk, and where
+    /// the band sits depends on the framing.
+    /// </summary>
+    public UnityEngine.Rect TitleSpace
+    {
+        get
+        {
+            if (_texture == null || _image == null || _image.color.a <= 0f ||
+                _rowSplitPx <= 1f || _toolSplitPx <= 1f)
+                return new UnityEngine.Rect(0f, 0f, 0f, 0f);
+
+            float pad = HudPad;
+            float left = pad + _toolSplitPx + ToolGap;
+            float top = pad + _rowSplitPx;
+            return new UnityEngine.Rect(left, top,
+                                        Mathf.Max(0f, _healthEndPx + pad - left),
+                                        _texture.height - _rowSplitPx);
+        }
+    }
+
     void RestoreScope()
     {
         try { _scope.Restore(); }

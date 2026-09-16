@@ -75,7 +75,7 @@ static class Program
     static void Layout()
     {
         var thor = new DsLayout(1240, 1080);
-        Assert(thor.Hud.height == 240f && thor.Tabs.height == 176f && thor.Body.height == 664f,
+        Assert(thor.Hud.height == 240f && thor.Tabs.height == 140f && thor.Body.height == 700f,
             "The Thor layout does not reserve the requested HUD and tab space");
         foreach (float width in new[] { 992f, 1240f, 1920f })
         foreach (float height in new[] { 720f, 969f, 1080f, 1440f })

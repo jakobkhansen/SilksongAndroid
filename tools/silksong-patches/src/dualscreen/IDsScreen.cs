@@ -20,6 +20,20 @@
 #if UNITY_ANDROID && !UNITY_EDITOR
 using UnityEngine;
 
+/// <summary>
+/// A screen whose header title is not simply its name.
+///
+/// The Map is the one that has this: the designs show the AREA there --
+/// "Choral Chambers" -- rather than the word MAP, because which tab you are on
+/// is already obvious from the caret in the strip below, while where you are
+/// is the thing you opened the map to find out.
+/// </summary>
+public interface IDsHeaderTitle
+{
+    /// <summary>Null or empty falls back to the screen's Title.</summary>
+    string HeaderTitle { get; }
+}
+
 public interface IDsScreen
 {
     /// <summary>Stable identifier, used for persistence. Not shown.</summary>

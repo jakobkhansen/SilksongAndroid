@@ -56,6 +56,8 @@ public class DsShell
     // The header's buttons, filled by whichever screen is visible.
     readonly DsActionBar _actions = new DsActionBar();
     readonly List<DsAction> _actionBuffer = new List<DsAction>();
+    // The screen's name in the header, in the space the tools used to fill.
+    TmpText _headerTitle;
     // Starts idle. The shell is built before anything is known about whether a
     // save is loaded, and defaulting to a screen meant the panel opened on an
     // empty Inventory and only corrected itself once the idle grace expired.
@@ -131,6 +133,17 @@ public class DsShell
         // Built into the header, after the HUD, so its labels draw over the
         // ground rather than under the health's render texture.
         _actions.Build(_header, _w);
+
+        // The screen's name, beside the silk bar. Placed per frame rather than
+        // here: the space it sits in depends on the player's maximum silk and
+        // on the HUD's framing, neither of which is known at build time.
+        //
+        // The DISPLAY face, which is caps-only and correct for the tab names we
+        // write ourselves -- but the Map overrides this with a zone name from
+        // the game, which is mixed case, so the face is chosen per frame too.
+        _headerTitle = DsWidgets.Label(_header, "screen-title", "", TitleSize,
+                                       DsTheme.Ink, TmpAlign.Bottom, display: true);
+        DsWidgets.SetActive(_headerTitle, false);
 
         _tabBar = DsWidgets.Rect(_root, "tabs");
         DsWidgets.Place(_tabBar, _layout.Tabs);
@@ -237,7 +250,7 @@ public class DsShell
             e.Tab = DsWidgets.Rect(_tabBar, "tab-" + e.Screen.Id);
             DsWidgets.Place(e.Tab, bounds.x, 0f, bounds.width, bounds.height);
 
-            float size = Mathf.Min(144f, bounds.height - 32f);
+            float size = Mathf.Min(144f, bounds.height - 16f);
             var art = DsWidgets.Rect(e.Tab, "art");
             DsWidgets.Place(art, (bounds.width - size) * 0.5f,
                             (bounds.height - size) * 0.5f, size, size);
@@ -246,7 +259,7 @@ public class DsShell
             // Where the caret sits for this tab, in the tab bar's space. Starts
             // as the icon's whole box and is narrowed to the art itself once
             // the sprite arrives -- see RefreshTabArt.
-            float icon = Mathf.Min(88f, bounds.height - 72f);
+            float icon = Mathf.Min(88f, bounds.height - 40f);
             e.CaretBox = new Rect(bounds.x + (bounds.width - icon) * 0.5f,
                                   (bounds.height - icon) * 0.5f, icon, icon);
             e.CaretRect = e.CaretBox;
@@ -284,7 +297,7 @@ public class DsShell
                     e.TabIcon.sprite = sprite;
                     if (sprite != null)
                     {
-                        float size = Mathf.Min(88f, _layout.Tabs.height - 72f);
+                        float size = Mathf.Min(88f, _layout.Tabs.height - 40f);
                         DsWidgets.FitCentred(e.TabIcon, sprite, size, size);
                         // FitCentred sizes the rect to the sprite's own aspect
                         // and shifts it so the trimmed mesh is centred, so the
@@ -487,6 +500,61 @@ public class DsShell
         if (e.Broken) return;
         Guard(e, () => e.Screen.Tick(dt));
         RefreshActions(e);
+        RefreshTitle(e);
+    }
+
+    // Sized against the designs, where the title is the largest thing on the
+    // header after the health itself. A knob, because it is judged by eye and
+    // DsConfig costs a restart rather than a rebuild.
+    static float TitleSize => Mathf.Clamp(DsConfig.Int("header_title_px", 52), 12, 120);
+
+    /// <summary>Air left between the title and the rule under the header.</summary>
+    static float TitleBottomGap => Mathf.Clamp(DsConfig.Int("header_title_gap_px", 6), 0, 80);
+
+    /// <summary>
+    /// Put the screen's name beside the silk bar, in the room the tools left.
+    ///
+    /// Re-placed every frame because that room is not fixed: it ends where the
+    /// health ends, and the health grows and shrinks with the player's masks.
+    /// </summary>
+    void RefreshTitle(Entry e)
+    {
+        if (_headerTitle == null) return;
+
+        string text = null;
+        var custom = e.Screen as IDsHeaderTitle;
+        if (custom != null) { try { text = custom.HeaderTitle; } catch { } }
+        if (string.IsNullOrEmpty(text)) { try { text = e.Screen.Title; } catch { } }
+
+        Rect space = _hud != null ? _hud.TitleSpace : new Rect(0f, 0f, 0f, 0f);
+        bool show = !string.IsNullOrEmpty(text) && space.height > 10f && !e.Broken;
+        DsWidgets.SetActive(_headerTitle, show);
+        if (!show) return;
+
+        // Upper case, always. A tab name is already written that way; a zone
+        // name arrives from the game in mixed case ("Choral Chambers") and is
+        // raised to match, which also keeps it on the display face -- Trajan
+        // has no real lowercase, see DsWidgets.Label.
+        text = text.ToUpperInvariant();
+        var font = DsTheme.Display;
+        if (font != null && _headerTitle.font != font)
+        {
+            _headerTitle.font = font;
+            try { if (font.material != null) _headerTitle.fontSharedMaterial = font.material; } catch { }
+        }
+
+        if (_headerTitle.text != text) _headerTitle.text = text;
+        // Centred on the PANEL rather than in the gap it sits in, which is what
+        // the designs do: the gap is wherever the health happens to end, and a
+        // title centred in it would wander as the player gains and loses masks.
+        // Only its row comes from the gap.
+        //
+        // Sat on the BOTTOM of that row, a little clear of the rule beneath it.
+        // Centred vertically it floated in the middle of a band taller than the
+        // words, which read as a gap between the title and the divider rather
+        // than as a title above one.
+        DsWidgets.Place(_headerTitle.rectTransform, 0f, space.y, _w,
+                        Mathf.Max(10f, space.height - TitleBottomGap));
     }
 
     /// <summary>

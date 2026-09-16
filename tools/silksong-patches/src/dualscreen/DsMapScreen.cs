@@ -34,11 +34,13 @@ using GlobalEnums;
 using TmpText = TMProOld.TextMeshProUGUI;
 using TmpAlign = TMProOld.TextAlignmentOptions;
 
-public class DsMapScreen : IDsScreen, IDsActionBar
+public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle
 {
     enum State { Idle, NoMap, Map }
 
     const float HeaderH = 72f;
+    /// <summary>Air under the map, above the tab strip's own.</summary>
+    static float MapBottomPad => Mathf.Clamp(DsConfig.Int("map_bottom_pad_px", 4), 0, 60);
     const float SymbolSize = 260f;
     // How long the last rendered frame is held when the game drops out of
     // gameplay. Scene transitions do that for a few frames, and flashing the
@@ -50,12 +52,14 @@ public class DsMapScreen : IDsScreen, IDsActionBar
     RectTransform _mapPanel, _noMapBox;
     RawImage _raw;
     Image _symbol;
-    TmpText _header, _noMapText;
+    TmpText _noMapText;
 
     Rect _mapRect;              // in panel layout space, for hit-testing
     State _state = State.Idle;
     bool _stateApplied;
     bool _buttonsShown;
+    // The area's name, shown by the shell in the header.
+    string _zoneName = "";
     float _holdUntil;
     MapZone _zone = MapZone.NONE;
     float _nextSymbolHunt;
@@ -76,9 +80,17 @@ public class DsMapScreen : IDsScreen, IDsActionBar
         float bodyH = layout.Body.height;
 
         float x = DsTheme.Pad;
-        float y = HeaderH;
+        // The zone name used to sit here, in the body, costing the map a band
+        // across its top. It is in the HEADER now -- above the divider, where
+        // the designs put it -- so the map takes the whole body back.
+        //
+        // And only a hairline at the bottom rather than the panel's usual
+        // padding: the tab strip below already carries its own air above the
+        // icons, so a full pad here stacked two margins into one wide black
+        // band between the map and the tabs.
+        float y = DsTheme.Pad;
         float w = panelW - DsTheme.Pad * 2f;
-        float h = bodyH - HeaderH - DsTheme.Pad;
+        float h = bodyH - DsTheme.Pad - MapBottomPad;
 
         // Kept in panel space too, because gestures arrive in panel pixels and
         // converting the rect once is cheaper and clearer than converting every
@@ -86,13 +98,8 @@ public class DsMapScreen : IDsScreen, IDsActionBar
         _mapRect = layout.InBody(new Rect(x, y, w, h));
 
         // FULL MAP and RESET live in the HEADER now, not over the map -- see
-        // DsActions. Both were controls drawn on a pannable surface, which is a
-        // control you hit while dragging, and they took the width the zone name
-        // wanted. The header gives the name the whole line.
-        _header = DsWidgets.Label(host, "zone", "", DsTheme.TitleSize,
-                                  DsTheme.Ink, TmpAlign.Left);
-        if (_header != null)
-            DsWidgets.Place(_header.rectTransform, x, 10f, w, HeaderH - 18f);
+        // DsActions -- and so does the zone name, which the shell asks for
+        // through IDsHeaderTitle.
 
         // No border. The map is a picture with its own edges; a frame around it
         // read as a second, competing one.
@@ -224,7 +231,7 @@ public class DsMapScreen : IDsScreen, IDsActionBar
         if (_state == State.Idle)
         {
             // No zone to name, and the symbol says the rest.
-            if (_header != null) _header.text = "";
+            _zoneName = "";
             HuntSymbol();
             return;
         }
@@ -235,7 +242,7 @@ public class DsMapScreen : IDsScreen, IDsActionBar
             // refuses for a zone with no map, so anything shown here would be
             // the PREVIOUS area's name -- which is worse than a blank, because
             // it is confidently wrong about where you are.
-            if (_header != null) _header.text = "";
+            _zoneName = "";
             _zone = MapZone.NONE;
             HuntSymbol();
             return;
@@ -246,13 +253,13 @@ public class DsMapScreen : IDsScreen, IDsActionBar
         // Pharloom, labels the wrong thing.
         if (_view.Mode == DsMapView.Frame.World)
         {
-            if (_header != null) _header.text = "";
+            _zoneName = "";
             _zone = MapZone.NONE;      // force a refresh on the way back
             return;
         }
 
         var zone = _view.CurrentZone;
-        if (zone != _zone || _header == null || _header.text.Length == 0)
+        if (zone != _zone || string.IsNullOrEmpty(_zoneName))
         {
             _zone = zone;
             // TryOpenQuickMap hands back the name the game itself would print,
@@ -261,7 +268,7 @@ public class DsMapScreen : IDsScreen, IDsActionBar
             // localisation sheet until the map has been opened once.
             string named = _view.ZoneName;
             if (string.IsNullOrEmpty(named)) named = ZoneName(zone);
-            if (_header != null) _header.text = named;
+            _zoneName = named;
         }
 
         if (_state == State.NoMap) HuntSymbol();
@@ -398,10 +405,19 @@ public class DsMapScreen : IDsScreen, IDsActionBar
         _view.SetMode(next);
     }
 
-    // ── header actions ──────────────────────────────────────────────────────
-
-    public void CollectActions(List<DsAction> into)
+    /// <summary>
+    /// The area's name, which the shell draws in the header.
+    ///
+    /// Empty on the full map and outside a map, where the shell falls back to
+    /// the tab's own name: "Choral Chambers" over a view of the whole of
+    /// Pharloom would be labelling the wrong thing.
+    /// </summary>
+    public string HeaderTitle
     {
+        get { return _state == State.Map ? _zoneName : null; }
+    }
+
+    public void CollectActions(List<DsAction> into)    {
         // Offered wherever they would do something, which is the same condition
         // the buttons were drawn under before: a map to reframe, or at least a
         // map somewhere to go back to.

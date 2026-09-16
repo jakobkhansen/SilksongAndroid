@@ -5,7 +5,12 @@ using UnityEngine;
 public readonly struct DsLayout
 {
     public const float HudHeight = 240f;
-    public const float TabHeight = 176f;
+    // The strip is sized around the icons rather than the other way round. At
+    // 176 an 88 px glyph sat in 44 px of air top and bottom, which read as a
+    // wide black band between the content and the tabs -- most obviously under
+    // the map, which fills its body edge to edge. The body gains what the strip
+    // gives up.
+    public const float TabHeight = 140f;
 
     public readonly float Width, Height, InputHeight;
     public readonly Rect Hud, Body, Tabs;
