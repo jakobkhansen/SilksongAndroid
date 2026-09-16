@@ -29,6 +29,10 @@ public sealed class DsHudView : MonoBehaviour
     Camera _capture, _scopedCamera;
     RenderTexture _texture;
     RawImage _image;
+    RawImage _silkImage, _toolsImage;
+    // The capture, in texture pixels, cut into three: the mask row across the
+    // top, and below it the silk bar and the tools side by side.
+    float _rowSplitPx, _healthEndPx, _toolSplitPx, _maskCentrePx, _toolOffsetPx;
     TmpText _fallback;
     GameCameras _gameCameras;
     Transform _hudRoot, _health, _barParent, _capRAnchor, _tools;
@@ -50,6 +54,9 @@ public sealed class DsHudView : MonoBehaviour
     /// it is judged against the design by eye.
     /// </summary>
     static float HudPad => Mathf.Clamp(DsConfig.Int("hud_pad_px", 6), 0, 60);
+
+    /// <summary>Air between the health and the tools drawn beside it.</summary>
+    static float ToolGap => Mathf.Clamp(DsConfig.Int("hud_tool_gap_px", 28), 0, 300);
     static readonly FieldInfo JitterActive = typeof(JitterSelf).GetField("isActive", PrivateInstance);
     static readonly FieldInfo JitterOrigin = typeof(JitterSelf).GetField("initialPosition", PrivateInstance);
     static readonly FieldInfo JitterTransform = typeof(JitterSelf).GetField("overrideTransform", PrivateInstance);
@@ -70,6 +77,33 @@ public sealed class DsHudView : MonoBehaviour
         _image = rect.gameObject.AddComponent<RawImage>();
         _image.raycastTarget = false;
         _image.color = Color.clear;
+
+        // The tool and skill icons are photographed with everything else -- one
+        // camera, one texture -- but they are DRAWN beside the mask row instead
+        // of below it, where the game puts them.
+        //
+        // That needs THREE pictures of the one capture, not two, and the reason
+        // is worth writing down because the obvious two-way split produces a
+        // convincing-looking mess. The tools are not to the right of the health:
+        // they are BELOW the masks and to the right of the silk bar, and the
+        // mask row runs on past them. Cutting the picture vertically at the
+        // tools therefore cuts the mask row in half as well, and drawing both
+        // halves leaves the tools in the picture twice and a band of masks
+        // stranded above them.
+        //
+        // So: the mask row across the top, then the silk bar and the tools as
+        // two pieces of the band beneath it. Only the third moves.
+        var silkRect = DsWidgets.Rect(host, "health-silk");
+        _silkImage = silkRect.gameObject.AddComponent<RawImage>();
+        _silkImage.raycastTarget = false;
+        _silkImage.color = Color.clear;
+        DsWidgets.SetActive(_silkImage, false);
+
+        var toolsRect = DsWidgets.Rect(host, "health-tools");
+        _toolsImage = toolsRect.gameObject.AddComponent<RawImage>();
+        _toolsImage.raycastTarget = false;
+        _toolsImage.color = Color.clear;
+        DsWidgets.SetActive(_toolsImage, false);
         _fallback = DsWidgets.Label(host, "health-status", "", DsTheme.SmallSize, DsTheme.InkDim);
         DsWidgets.Place(_fallback.rectTransform, pad, pad, w, h);
         DsWidgets.SetActive(_fallback, false);
@@ -167,6 +201,8 @@ public sealed class DsHudView : MonoBehaviour
         _submitted = false;
         _presented = false;
         if (_image != null) _image.color = Color.clear;
+        Hide(_silkImage);
+        Hide(_toolsImage);
         try { RestoreAllScopes(); }
         catch (Exception e) { Fail(e); }
     }
@@ -380,6 +416,7 @@ public sealed class DsHudView : MonoBehaviour
             if (!captured) return;
             _capturedFrame = Time.frameCount;
             _image.color = Color.white;
+            ApplySplit();
             _waitingSince = -1f;
             _waitingReason = null;
             DsWidgets.SetActive(_fallback, false);
@@ -387,6 +424,82 @@ public sealed class DsHudView : MonoBehaviour
         catch (Exception e) { Fail(e); }
     }
 
+    /// <summary>
+    /// Draw the one capture as two pictures: the health, and the tools beside
+    /// the mask row.
+    ///
+    /// Both are sub-rectangles of the same texture at one-to-one scale, so
+    /// neither is stretched and the artwork keeps the size the framing chose.
+    /// </summary>
+    /// <summary>
+    /// Draw the one capture as three pictures: the mask row, the silk bar, and
+    /// the tools lifted up beside the masks.
+    ///
+    /// Each is a sub-rectangle at one-to-one scale, so nothing is stretched and
+    /// the artwork keeps the size the framing chose. uvRect counts from the
+    /// BOTTOM, while every measurement here counts from the top, which is the
+    /// one conversion to keep an eye on.
+    /// </summary>
+    void ApplySplit()
+    {
+        if (_image == null || _texture == null) return;
+
+        float pad = HudPad;
+        float texW = _texture.width, texH = _texture.height;
+        bool split = _rowSplitPx > 1f && _rowSplitPx < texH - 1f &&
+                     _toolSplitPx > 1f && _toolSplitPx < texW - 1f &&
+                     _healthEndPx > 1f;
+
+        if (!split)
+        {
+            // No tools equipped, or they are not where we expect: one picture,
+            // exactly as before any of this.
+            _image.uvRect = new UnityEngine.Rect(0f, 0f, 1f, 1f);
+            DsWidgets.Place(_image.rectTransform, pad, pad, texW, texH);
+            Hide(_silkImage);
+            Hide(_toolsImage);
+            return;
+        }
+
+        float bandH = texH - _rowSplitPx;      // the silk/tools row
+        float bandV = bandH / texH;            // ...as a uv height, measured up
+
+        // 1. The mask row, full width, across the top.
+        _image.uvRect = new UnityEngine.Rect(0f, bandV, 1f, _rowSplitPx / texH);
+        DsWidgets.Place(_image.rectTransform, pad, pad, texW, _rowSplitPx);
+
+        // 2. The silk bar: the band below, up to where the tools begin.
+        if (_silkImage != null)
+        {
+            _silkImage.texture = _texture;
+            _silkImage.uvRect = new UnityEngine.Rect(0f, 0f, _toolSplitPx / texW, bandV);
+            DsWidgets.Place(_silkImage.rectTransform, pad, pad + _rowSplitPx, _toolSplitPx, bandH);
+            _silkImage.color = Color.white;
+            DsWidgets.SetActive(_silkImage, true);
+        }
+
+        // 3. The tools: the rest of that band, moved up beside the masks and
+        // along to wherever the health now ends.
+        if (_toolsImage != null)
+        {
+            float toolsW = texW - _toolSplitPx;
+            _toolsImage.texture = _texture;
+            _toolsImage.uvRect = new UnityEngine.Rect(_toolSplitPx / texW, 0f, toolsW / texW, bandV);
+            DsWidgets.Place(_toolsImage.rectTransform,
+                            pad + _healthEndPx + ToolGap,
+                            pad + _maskCentrePx - _toolOffsetPx,
+                            toolsW, bandH);
+            _toolsImage.color = Color.white;
+            DsWidgets.SetActive(_toolsImage, true);
+        }
+    }
+
+    static void Hide(RawImage image)
+    {
+        if (image == null) return;
+        image.color = Color.clear;
+        DsWidgets.SetActive(image, false);
+    }
     void RestoreScope()
     {
         try { _scope.Restore(); }
@@ -491,6 +604,13 @@ public sealed class DsHudView : MonoBehaviour
         }
         _activeTools = 0;
         _toolIcons.Clear();
+        // Everything that is HEALTH -- the masks, the lifeblood, and the silk
+        // bar's own cap below them. Kept apart from `rightmost`, which goes on
+        // to include the tools: the tools are drawn beside the health now, so
+        // where the health ENDS is what decides where they start, and that
+        // moves with the player's mask count. Measuring to the tools' own
+        // native position instead left a gap that grew as masks were lost.
+        float healthRight = Mathf.Max(rightmost, LayoutPosition(_capRAnchor).x);
         _tools.GetComponentsInChildren(true, _toolIcons);
         foreach (var icon in _toolIcons)
         {
@@ -519,9 +639,79 @@ public sealed class DsHudView : MonoBehaviour
         t.SetPositionAndRotation(_hudRoot.position + _hudRoot.rotation * position, _hudRoot.rotation);
         _capture.orthographicSize = framing.HalfHeight;
         _capture.aspect = (float)_texture.width / _texture.height;
+        MeasureToolSplit(framing, anchor, pitch, healthRight);
         return true;
     }
 
+    /// <summary>
+    /// Work out where the tools begin inside the capture, and how far above
+    /// their own row the mask row sits.
+    ///
+    /// Both in texture pixels, which is the same scale the panel draws at: the
+    /// capture is framed at MaskPixelPitch per mask, so a sub-rectangle of it
+    /// can be drawn one-to-one anywhere on the header without distorting.
+    /// </summary>
+    /// <summary>
+    /// Cut the capture into the mask row, the silk bar and the tools.
+    ///
+    /// Everything in texture pixels, which is the scale the panel draws at: the
+    /// capture is framed at MaskPixelPitch per mask, so any sub-rectangle can be
+    /// drawn one-to-one on the header without distorting.
+    ///
+    ///   _rowSplitPx     y of the line between the mask row and the band below
+    ///   _healthEndPx    x where the HEALTH ends -- moves with the mask count
+    ///   _toolSplitPx    x where the TOOLS begin in the game's own layout
+    ///   _maskCentrePx   y of the mask row's centre, to line the tools up with
+    ///   _toolOffsetPx   y of the tools' centre within their own band
+    ///
+    /// The last two are what carry the tools up a row. The two x values are
+    /// different on purpose: the tools are sampled from wherever the game draws
+    /// them, which never moves, and drawn just past the end of the health,
+    /// which moves every time a mask is gained or lost.
+    /// </summary>
+    void MeasureToolSplit(DsHudFrame framing, Vector3 anchor, float pitch, float healthRight)
+    {
+        _rowSplitPx = 0f;
+        _healthEndPx = 0f;
+        _toolSplitPx = 0f;
+        _maskCentrePx = 0f;
+        _toolOffsetPx = 0f;
+        if (_activeTools <= 0) return;
+
+        float ppu = framing.PixelPitch / pitch;
+        if (ppu <= 0f) return;
+
+        float leftmost = float.MaxValue, sumY = 0f;
+        int counted = 0;
+        foreach (var icon in _toolIcons)
+        {
+            if (icon == null || !icon.gameObject.activeInHierarchy || icon.CurrentTool == null) continue;
+            Vector3 p = LayoutPosition(icon.transform);
+            leftmost = Mathf.Min(leftmost, p.x);
+            sumY += p.y;
+            counted++;
+        }
+        if (counted == 0) return;
+
+        float toolsY = sumY / counted;
+        // The tools have to be BELOW the masks for any of this to mean
+        // anything. If the game ever lays them out level, leave it alone.
+        if (toolsY >= anchor.y - pitch * 0.25f) return;
+
+        float texLeftWorld = framing.Position.x - _texture.width / (2f * ppu);
+        float texTopWorld = framing.Position.y + _texture.height / (2f * ppu);
+
+        // Half a slot of air either side of each cut, so none falls through art.
+        _healthEndPx = Mathf.Clamp((healthRight + pitch * 0.6f - texLeftWorld) * ppu, 0f, _texture.width);
+        _toolSplitPx = Mathf.Clamp((leftmost - pitch * 0.6f - texLeftWorld) * ppu, 0f, _texture.width);
+
+        // Between the two rows, so the mask band keeps its whole width and the
+        // tools leave with only the band beneath.
+        float midY = (anchor.y + toolsY) * 0.5f;
+        _rowSplitPx = Mathf.Clamp((texTopWorld - midY) * ppu, 0f, _texture.height);
+        _maskCentrePx = Mathf.Clamp((texTopWorld - anchor.y) * ppu, 0f, _texture.height);
+        _toolOffsetPx = (texTopWorld - toolsY) * ppu - _rowSplitPx;
+    }
     Vector3 LayoutPosition(Transform target)
     {
         Vector3 position = target.position;

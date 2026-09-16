@@ -56,6 +56,9 @@ public abstract class DsGridScreen : IDsScreen
     /// </summary>
     protected virtual float CapReach => 0f;
 
+    /// <summary>The shared grid, so a screen can act on what is selected.</summary>
+    protected DsIconGrid Selection => Grid;
+
     public virtual void Build(RectTransform host)
     {
         Grid.EmptyMessage = EmptyMessage;
@@ -158,7 +161,7 @@ public abstract class DsGridScreen : IDsScreen
 // authoritative store, GetItemByName is a pure lookup into the master list, and
 // neither touches the manager's cache or its version.
 
-public class DsInventoryScreen : DsGridScreen
+public class DsInventoryScreen : DsGridScreen, IDsActionBar
 {
     // Three columns: what Hornet IS, what she is CARRYING, and what the thing
     // under the cursor is.
@@ -321,6 +324,78 @@ public class DsInventoryScreen : DsGridScreen
         }
 
         return new List<DsSection> { relics, consumables };
+    }
+
+    // ── USE ─────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Offer USE only while the selection is something that can be drunk right
+    /// now, which is the game's own test: InventoryItemCollectable shows its
+    /// consume prompt under exactly `IsConsumable() && CanConsumeRightNow()`.
+    /// The second half is the one that matters -- a Rosary Cluster is always
+    /// consumable and is not usable at full health, and CanConsumeRightNow is
+    /// what knows the difference.
+    /// </summary>
+    public void CollectActions(List<DsAction> into)
+    {
+        var item = SelectedCollectable();
+        if (item == null) return;
+
+        bool consumable = false, now = false;
+        try { consumable = item.IsConsumable(); } catch { }
+        if (!consumable) return;
+        try { now = item.CanConsumeRightNow(); } catch { }
+
+        // Shown disabled rather than withdrawn when it cannot be used. The item
+        // IS a thing you drink; that it would do nothing at this moment is
+        // worth saying, and it is what the game says too -- it draws the same
+        // prompt greyed (forceDisabled) instead of removing it.
+        into.Add(new DsAction("USE", now ? (Action)(() => Consume(item)) : null, !now));
+    }
+
+    CollectableItem SelectedCollectable()
+    {
+        string key = Selection.SelectedKey;
+        if (string.IsNullOrEmpty(key) || !DsGameData.InGame) return null;
+
+        var mgr = CollectableItemManager.Instance;
+        if (mgr == null) return null;
+        try
+        {
+            // The master list, as CollectSections uses: pure, and it does not
+            // mark anything as seen just by being read.
+            var all = mgr.GetAllCollectables();
+            if (all == null) return null;
+            foreach (var item in all)
+                if (item != null && item.name == key) return item;
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>
+    /// Drink it, which is the whole of what InventoryItemCollectable's consume
+    /// coroutine actually DOES to the save: the response, then the item.
+    ///
+    /// Everything else in that routine is presentation -- the hold, the shake,
+    /// the sounds, the fade -- and belongs to a pane we are not drawing. The
+    /// two calls below are taken from the end of ConsumeRoutine, in its order:
+    /// the response first, because TakeItemOnConsume decides separately whether
+    /// the item is spent at all, and some are not.
+    /// </summary>
+    static void Consume(CollectableItem item)
+    {
+        try
+        {
+            item.ConsumeItemResponse();
+            bool take = true;
+            try { take = item.TakeItemOnConsume; } catch { }
+            if (take) item.Take(1, showCounter: false);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[DualScreen] use failed: " + e.Message);
+        }
     }
 }
 // ── Journal ─────────────────────────────────────────────────────────────────

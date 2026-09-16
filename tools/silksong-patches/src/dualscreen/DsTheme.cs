@@ -331,6 +331,55 @@ public static class DsTheme
         }
     }
 
+    static Sprite _rounded;
+
+    /// <summary>
+    /// A white rounded rectangle, generated once, set up for nine-slicing.
+    ///
+    /// The header's buttons are solid white plates in the designs, and a plate
+    /// needs a corner radius that does not stretch with it -- a button sized to
+    /// "FULL MAP" and one sized to "RESET" have to show the SAME curve. That is
+    /// what the border is for: Image.Type.Sliced keeps the four corners at their
+    /// authored size and stretches only the middle.
+    /// </summary>
+    public static Sprite Rounded
+    {
+        get
+        {
+            if (_rounded != null) return _rounded;
+            const int size = 48;
+            const float radius = 10f;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { name = "DsRounded" };
+            var px = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    // Distance outside the rounded rect: zero anywhere in the
+                    // straight middle, and the corner arc only near a corner.
+                    float dx = Mathf.Max(radius - (x + 0.5f), (x + 0.5f) - (size - radius));
+                    float dy = Mathf.Max(radius - (y + 0.5f), (y + 0.5f) - (size - radius));
+                    dx = Mathf.Max(dx, 0f);
+                    dy = Mathf.Max(dy, 0f);
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    // One pixel of feather, so the curve is not stair-stepped.
+                    float a = Mathf.Clamp01(radius - d);
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.hideFlags = HideFlags.HideAndDontSave;
+            _rounded = Sprite.Create(tex, new UnityEngine.Rect(0, 0, size, size),
+                                     new Vector2(0.5f, 0.5f), 100f, 0,
+                                     SpriteMeshType.FullRect,
+                                     new Vector4(radius + 2f, radius + 2f, radius + 2f, radius + 2f));
+            _rounded.hideFlags = HideFlags.HideAndDontSave;
+            return _rounded;
+        }
+    }
+
     public static Sprite FindSprite(string name)
     {
         Sprite found;

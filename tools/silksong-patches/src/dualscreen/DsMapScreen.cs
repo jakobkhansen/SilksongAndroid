@@ -27,21 +27,19 @@
 
 #if UNITY_ANDROID && !UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using GlobalEnums;
 using TmpText = TMProOld.TextMeshProUGUI;
 using TmpAlign = TMProOld.TextAlignmentOptions;
 
-public class DsMapScreen : IDsScreen
+public class DsMapScreen : IDsScreen, IDsActionBar
 {
     enum State { Idle, NoMap, Map }
 
     const float HeaderH = 72f;
     const float SymbolSize = 260f;
-    const float ButtonW = 250f;
-    const float ResetW = 150f;
-    const float ButtonH = 52f;
     // How long the last rendered frame is held when the game drops out of
     // gameplay. Scene transitions do that for a few frames, and flashing the
     // idle panel in the middle of walking through a door is the flicker.
@@ -49,13 +47,12 @@ public class DsMapScreen : IDsScreen
 
     DsMapView _view;
     RectTransform _host;
-    RectTransform _mapPanel, _noMapBox, _button, _reset;
+    RectTransform _mapPanel, _noMapBox;
     RawImage _raw;
     Image _symbol;
-    TmpText _header, _noMapText, _buttonLabel;
+    TmpText _header, _noMapText;
 
     Rect _mapRect;              // in panel layout space, for hit-testing
-    Rect _buttonRect, _resetRect;
     State _state = State.Idle;
     bool _stateApplied;
     bool _buttonsShown;
@@ -88,36 +85,14 @@ public class DsMapScreen : IDsScreen
         // drag.
         _mapRect = layout.InBody(new Rect(x, y, w, h));
 
-        // The body face. This label holds a zone NAME, which is mixed case, and
-        // the display face is caps-only -- see the rule in DsWidgets.Label.
+        // FULL MAP and RESET live in the HEADER now, not over the map -- see
+        // DsActions. Both were controls drawn on a pannable surface, which is a
+        // control you hit while dragging, and they took the width the zone name
+        // wanted. The header gives the name the whole line.
         _header = DsWidgets.Label(host, "zone", "", DsTheme.TitleSize,
                                   DsTheme.Ink, TmpAlign.Left);
         if (_header != null)
-            DsWidgets.Place(_header.rectTransform, x, 10f,
-                            w - ButtonW - ResetW - 32f, HeaderH - 18f);
-
-        // FULL MAP toggles the framing between this zone and the whole of
-        // Pharloom. Both controls live in the header rather than over the map,
-        // because a control drawn on top of a pannable surface is a control the
-        // player hits by accident while dragging.
-        _button = DsWidgets.Panel(host, "fullmap", DsTheme.Panel, DsTheme.PanelEdge);
-        DsWidgets.Place(_button, x + w - ButtonW, 8f, ButtonW, ButtonH);
-        _buttonRect = layout.InBody(new Rect(x + w - ButtonW, 8f, ButtonW, ButtonH));
-
-        _buttonLabel = DsWidgets.Label(_button, "fullmap-label", "FULL MAP", DsTheme.BodySize,
-                                       DsTheme.Ink, TmpAlign.Center, display: true);
-        if (_buttonLabel != null) DsWidgets.Stretch(_buttonLabel.rectTransform);
-
-        // Panning and zooming leave no visible frame, so there has to be a way
-        // back that does not involve finding Hornet by eye.
-        float resetX = x + w - ButtonW - 16f - ResetW;
-        _reset = DsWidgets.Panel(host, "reset", DsTheme.Panel, DsTheme.PanelEdge);
-        DsWidgets.Place(_reset, resetX, 8f, ResetW, ButtonH);
-        _resetRect = layout.InBody(new Rect(resetX, 8f, ResetW, ButtonH));
-
-        var resetLabel = DsWidgets.Label(_reset, "reset-label", "RESET", DsTheme.BodySize,
-                                         DsTheme.InkDim, TmpAlign.Center, display: true);
-        if (resetLabel != null) DsWidgets.Stretch(resetLabel.rectTransform);
+            DsWidgets.Place(_header.rectTransform, x, 10f, w, HeaderH - 18f);
 
         // No border. The map is a picture with its own edges; a frame around it
         // read as a second, competing one.
@@ -234,8 +209,6 @@ public class DsMapScreen : IDsScreen
         // and the game's own menu does not hide its map pane there either. They
         // go only when there is no map anywhere to open, or no game at all.
         _buttonsShown = s == State.Map || (s == State.NoMap && _view != null && _view.HasAnyMap);
-        DsWidgets.SetActive(_button, _buttonsShown);
-        DsWidgets.SetActive(_reset, _buttonsShown);
 
         // The texture handle can change if the rig is ever rebuilt; re-reading
         // it here costs nothing and removes a way for the panel to go black.
@@ -403,15 +376,6 @@ public class DsMapScreen : IDsScreen
 
         Vector2 p = DsPresentation.ToLayout(g.Position);
 
-        // The buttons are live wherever they are drawn, which now includes the
-        // No-Map state -- otherwise FULL MAP would be visible there and do
-        // nothing, which is worse than not offering it.
-        if (g.Type == DsGestureType.Tap && _buttonsShown)
-        {
-            if (_buttonRect.Contains(p)) { ToggleMode(); return; }
-            if (_resetRect.Contains(p)) { _view.ResetView(); return; }
-        }
-
         if (_state != State.Map) return;
 
         switch (g.Type)
@@ -432,8 +396,21 @@ public class DsMapScreen : IDsScreen
                  ? DsMapView.Frame.World
                  : DsMapView.Frame.Area;
         _view.SetMode(next);
-        if (_buttonLabel != null)
-            _buttonLabel.text = next == DsMapView.Frame.World ? "AREA MAP" : "FULL MAP";
+    }
+
+    // ── header actions ──────────────────────────────────────────────────────
+
+    public void CollectActions(List<DsAction> into)
+    {
+        // Offered wherever they would do something, which is the same condition
+        // the buttons were drawn under before: a map to reframe, or at least a
+        // map somewhere to go back to.
+        if (_view == null || !_buttonsShown) return;
+
+        into.Add(new DsAction(
+            _view.Mode == DsMapView.Frame.World ? "AREA MAP" : "FULL MAP",
+            ToggleMode));
+        into.Add(new DsAction("RESET", () => _view.ResetView()));
     }
 }
 #endif

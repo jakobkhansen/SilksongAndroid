@@ -53,6 +53,9 @@ public class DsShell
     // One caret for the strip, which travels between tabs rather than being
     // switched on inside whichever tab is chosen.
     readonly DsCursor _tabCursor = new DsCursor();
+    // The header's buttons, filled by whichever screen is visible.
+    readonly DsActionBar _actions = new DsActionBar();
+    readonly List<DsAction> _actionBuffer = new List<DsAction>();
     // Starts idle. The shell is built before anything is known about whether a
     // save is loaded, and defaulting to a screen meant the panel opened on an
     // empty Inventory and only corrected itself once the idle grace expired.
@@ -125,6 +128,10 @@ public class DsShell
         DsWidgets.HRule(_header, "rule", DsTheme.Pad, _layout.Hud.height,
                         _w - DsTheme.Pad * 2f);
 
+        // Built into the header, after the HUD, so its labels draw over the
+        // ground rather than under the health's render texture.
+        _actions.Build(_header, _w);
+
         _tabBar = DsWidgets.Rect(_root, "tabs");
         DsWidgets.Place(_tabBar, _layout.Tabs);
 
@@ -169,6 +176,7 @@ public class DsShell
         // A slide caught by the title card would resume against hosts that are
         // no longer on screen, and leave one shifted when it came back.
         EndSlide();
+        if (idle) _actions.Clear();
 
         _tabBar.gameObject.SetActive(!idle);
         _body.gameObject.SetActive(!idle);
@@ -334,6 +342,8 @@ public class DsShell
 
         e.Host.gameObject.SetActive(true);
         Guard(e, () => e.Screen.OnShow());
+        // The outgoing screen's actions are not the incoming one's.
+        _actions.Clear();
 
         bool canSlide = _slideSeconds > 0f && from >= 0 && from < _entries.Count
                         && !e.Broken && !_entries[from].Broken;
@@ -476,12 +486,37 @@ public class DsShell
         var e = _entries[_active];
         if (e.Broken) return;
         Guard(e, () => e.Screen.Tick(dt));
+        RefreshActions(e);
+    }
+
+    /// <summary>
+    /// Ask the visible screen what can be done right now.
+    ///
+    /// Every frame, and pulled rather than pushed, which is what lets an action
+    /// appear and withdraw on its own: USE is offered only while the cursor is
+    /// on something consumable, and nothing has to remember to take it away
+    /// when the selection moves or the last of an item is drunk.
+    /// </summary>
+    void RefreshActions(Entry e)
+    {
+        var source = e.Screen as IDsActionBar;
+        if (source == null) { _actions.Clear(); return; }
+
+        _actionBuffer.Clear();
+        Guard(e, () => source.CollectActions(_actionBuffer));
+        _actions.Set(_actionBuffer);
     }
 
     public void OnGesture(DsGesture g)
     {
         // Nothing to press on the title card.
         if (_idle) return;
+
+        // The header's buttons first, and before the shell's own routing: they
+        // sit outside the body, which is the only region that routing knows
+        // about, and a tap on one is not a tap on the screen beneath.
+        if (g.Type == DsGestureType.Tap &&
+            _actions.OnTap(_layout.ToLayout(g.Position))) return;
 
         int tab;
         var target = _gestures.Route(g, _layout, _entries.Count, out tab);

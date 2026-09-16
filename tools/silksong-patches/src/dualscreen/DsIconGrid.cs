@@ -376,6 +376,14 @@ public class DsIconGrid
 
     public int Count => _flat.Count;
 
+    /// <summary>
+    /// The Key of whatever is selected, or null. For a screen that needs to act
+    /// on the selection -- the Inventory's USE button asks the game whether
+    /// this item can be consumed right now.
+    /// </summary>
+    public string SelectedKey =>
+        _hasExternalTarget || _selected < 0 || _selected >= _flat.Count ? null : _selectedKey;
+
     /// <summary>Select an entry by its Key, and scroll it into view.</summary>
     public bool SelectByKey(string key)
     {
