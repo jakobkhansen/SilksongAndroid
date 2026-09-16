@@ -119,9 +119,38 @@ public sealed class DsHudRenderScope<T> where T : class
 public readonly struct DsHudFrame
 {
     public const float MaskPixelPitch = 55f;
-    const float LeadPitches = 3.6f;
-    const float AboveRowPitches = 1.4f;
-    const float HeightPitches = 3.6f;
+    // Margins around the health row, in mask pitches. One pitch is
+    // MaskPixelPitch on the panel, so 55 px, which is how these convert.
+    //
+    // The lead is measured from the first MASK, but what sits furthest left is
+    // the crest/bind icon beside it, and at 2.9 the frame cut through that
+    // icon: sampling the panel showed its leftmost column already carrying 16
+    // pixels of ink and climbing, which is a slice through a round shape rather
+    // than the edge of one. Margin added on top of a crop is spent widening the
+    // art back out before any of it becomes space, which is why two rounds of
+    // adding a few pixels looked like they did nothing at all. The 22 px here
+    // uncrops the icon and leaves about 5 px of air beside it.
+    //
+    // Public because the regression that guards the anchor asserts against
+    // them: written down twice, they drift apart, and the test then asserts
+    // that the HUD has not moved from wherever it has just moved to.
+    public const float LeadPitches = 2.9f + 22f / MaskPixelPitch;
+    // The space above is governed by the CREST, not by the mask row it is
+    // measured from: crests differ in size, and a larger one reaches higher
+    // than the masks beside it. Trimmed hard this looked right on a small crest
+    // and clipped the moment a bigger one was equipped, so it is back at the
+    // 1.4 pitches the HUD was originally framed with, plus 2 px of air so the
+    // largest of them -- the Wanderer's Crest -- is not flush against the top
+    // edge either. The lead still saves 16 px on the left, where nothing varies.
+    public const float AboveRowPitches = 1.0f + 24f / MaskPixelPitch;
+    // NOT raised to compensate for the shorter lead above, which was the
+    // instinct and is wrong twice over. The band's bottom is top - height, so
+    // trimming the margin above the row lowers both edges together: the rings
+    // below keep their room and simply move up with everything else. And the
+    // height is one of the terms that limits the scale, so growing it shrinks
+    // the mask spacing below the 55 px this panel is authored around -- which
+    // is what the framing regression caught.
+    public const float HeightPitches = 3.6f;
 
     public readonly Vector3 Position;
     public readonly float HalfHeight;

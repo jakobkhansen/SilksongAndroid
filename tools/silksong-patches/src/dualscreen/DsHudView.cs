@@ -44,6 +44,12 @@ public sealed class DsHudView : MonoBehaviour
     string _waitingReason;
 
     const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    /// <summary>
+    /// The HUD's own margin from the panel's top-left, in pixels. A knob, since
+    /// it is judged against the design by eye.
+    /// </summary>
+    static float HudPad => Mathf.Clamp(DsConfig.Int("hud_pad_px", 6), 0, 60);
     static readonly FieldInfo JitterActive = typeof(JitterSelf).GetField("isActive", PrivateInstance);
     static readonly FieldInfo JitterOrigin = typeof(JitterSelf).GetField("initialPosition", PrivateInstance);
     static readonly FieldInfo JitterTransform = typeof(JitterSelf).GetField("overrideTransform", PrivateInstance);
@@ -51,16 +57,21 @@ public sealed class DsHudView : MonoBehaviour
     public void Build(RectTransform host, float width, float height)
     {
         var rect = DsWidgets.Rect(host, "health");
-        float w = Mathf.Min(width - DsTheme.Pad * 2f, width * 0.74f);
+        // A tighter margin than the panel's usual padding. The HUD is the one
+        // thing on this screen that is pinned into a corner rather than set in
+        // a column, and the design holds it close to the top-left; the shared
+        // 20 px left a visible band of nothing above and beside the crest.
+        float pad = HudPad;
+        float w = Mathf.Min(width - pad * 2f, width * 0.74f);
         // Tool charge rings sit below the silk row. Use the existing header's
         // bottom padding too, without changing the health scale or body bounds.
-        float h = height - DsTheme.Pad;
-        DsWidgets.Place(rect, DsTheme.Pad, DsTheme.Pad, w, h);
+        float h = height - pad;
+        DsWidgets.Place(rect, pad, pad, w, h);
         _image = rect.gameObject.AddComponent<RawImage>();
         _image.raycastTarget = false;
         _image.color = Color.clear;
         _fallback = DsWidgets.Label(host, "health-status", "", DsTheme.SmallSize, DsTheme.InkDim);
-        DsWidgets.Place(_fallback.rectTransform, DsTheme.Pad, DsTheme.Pad, w, h);
+        DsWidgets.Place(_fallback.rectTransform, pad, pad, w, h);
         DsWidgets.SetActive(_fallback, false);
 
         try
@@ -206,8 +217,34 @@ public sealed class DsHudView : MonoBehaviour
         catch (Exception e) { Fail(e); }
     }
 
-    bool NativeVisible => _hudRoot != null && _hudRoot.gameObject.activeInHierarchy &&
-                          _gameCameras != null && _gameCameras.IsHudVisible && !HudGlobalHide.IsHidden;
+    /// <summary>
+    /// Is the game drawing enough of its HUD for us to photograph it?
+    ///
+    /// Deliberately NOT the game's own IsHudVisible. That follows the
+    /// hudCanvasSlideOut FSM, which the game drives OUT whenever something
+    /// covers the main screen -- opening the real inventory, a relic board, a
+    /// boss door. Every one of those is a statement about the main screen,
+    /// where the menu is drawn on top of the HUD, and none of them is true of a
+    /// second screen that the menu does not reach. Honouring it meant the
+    /// health simply vanished from the bottom panel for as long as the player
+    /// had the game's own inventory open.
+    ///
+    /// What still matters is that the art EXISTS: an inactive root has nothing
+    /// to render, and framing follows the live mask positions, so a HUD that has
+    /// merely been slid or nudged elsewhere is photographed where it now is.
+    ///
+    /// The old behaviour is a knob away, since "the game's own HUD visibility
+    /// applies" was a deliberate choice once and may want to be again.
+    /// </summary>
+    bool NativeVisible
+    {
+        get
+        {
+            if (_hudRoot == null || !_hudRoot.gameObject.activeInHierarchy) return false;
+            if (!DsConfig.Bool("hud_follow_game", false)) return true;
+            return _gameCameras != null && _gameCameras.IsHudVisible && !HudGlobalHide.IsHidden;
+        }
+    }
 
     bool CanPresent
     {

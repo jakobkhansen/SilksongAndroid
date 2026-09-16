@@ -341,8 +341,8 @@ static class Program
             float pixelsPerUnit = frame.PixelPitch / pitch;
             float firstX = (anchor.x - frame.Position.x) * pixelsPerUnit + viewport.x * 0.5f;
             float firstY = viewport.y * 0.5f - (anchor.y - frame.Position.y) * pixelsPerUnit;
-            Assert(Math.Abs(firstX - frame.PixelPitch * 3.6f) < 0.001f &&
-                   Math.Abs(firstY - frame.PixelPitch * 1.4f) < 0.001f, "HUD moved away from its stable top-left anchor");
+            Assert(Math.Abs(firstX - frame.PixelPitch * DsHudFrame.LeadPitches) < 0.001f &&
+                   Math.Abs(firstY - frame.PixelPitch * DsHudFrame.AboveRowPitches) < 0.001f, "HUD moved away from its stable top-left anchor");
             Assert(new DsHudFrame(anchor, pitch, rightmost, viewport, 1f, 0.5f).HalfHeight > frame.HalfHeight,
                 "Zoom-out did not widen framing");
         }
