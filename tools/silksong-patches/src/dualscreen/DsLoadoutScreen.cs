@@ -127,10 +127,15 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     }
 
     public void OnShow() { Refresh(force: true); }
-    public void OnHide() { }
+    public void OnHide() { ShowCrestPicker(false); }
 
     public void Tick(float dt)
     {
+        // Standing up from the bench closes it: the picker is a thing you can
+        // only act on at one, and leaving it open would offer crests that
+        // tapping no longer changes.
+        if (_choosingCrest && !AtBench()) ShowCrestPicker(false);
+
         if (Time.unscaledTime >= _nextRefresh)
         {
             _nextRefresh = Time.unscaledTime + 1f;
@@ -525,6 +530,20 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
 
     public void OnGesture(DsGesture g)
     {
+        // The picker covers the body, so nothing beneath it should see a tap.
+        if (_choosingCrest)
+        {
+            if (g.Type != DsGestureType.Tap) return;
+            Vector2 point = DsPresentation.ToLayout(g.Position);
+            for (int i = 0; i < _crestCells.Count; i++)
+            {
+                if (!_crestCells[i].Hit.Contains(point)) continue;
+                ChooseCrest(_crestCells[i].Id);
+                return;
+            }
+            return;
+        }
+
         // The grid handles everything on its own side, including scrolling and
         // selection, and ignores anything outside its own column.
         _grid.OnGesture(g);
@@ -573,6 +592,142 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     {
         try { return s.ToString(); } catch { return ""; }
     }
+    // ── crest picker ────────────────────────────────────────────────────────
+    //
+    // A full-body overlay rather than a rearrangement of the tab. Showing and
+    // hiding one opaque panel is a single toggle; hiding the tab's own parts
+    // would mean reaching into the grid's clip, its detail pane and the two
+    // gutter rules and putting them all back afterwards.
+
+    class CrestCell
+    {
+        public Rect Hit;              // layout space
+        public string Id;
+        public Image Art;
+        public RectTransform Root;
+    }
+
+    RectTransform _picker;
+    readonly List<CrestCell> _crestCells = new List<CrestCell>();
+    bool _choosingCrest;
+
+    void ShowCrestPicker(bool on)
+    {
+        _choosingCrest = on;
+        if (on) BuildCrestPicker();
+        if (_picker != null) DsWidgets.SetActive(_picker, on);
+    }
+
+    void BuildCrestPicker()
+    {
+        float bodyH = DsLayout.Current.Body.height;
+        float panelW = DsLayout.Current.Width;
+
+        if (_picker == null)
+        {
+            _picker = DsWidgets.Box(_host, "crest-picker", DsTheme.Ground).rectTransform;
+            DsWidgets.Place(_picker, 0f, 0f, panelW, bodyH);
+        }
+        _picker.SetAsLastSibling();
+
+        for (int i = 0; i < _crestCells.Count; i++)
+            if (_crestCells[i].Root != null) UnityEngine.Object.Destroy(_crestCells[i].Root.gameObject);
+        _crestCells.Clear();
+
+        List<ToolCrest> crests = null;
+        try { crests = ToolItemManager.GetAllCrests(); } catch { }
+        if (crests == null) return;
+
+        string current = null;
+        try { current = PlayerData.instance.CurrentCrestID; } catch { }
+
+        // One line naming every crest and why it is in or out. The filter is the
+        // game's own (InventoryToolCrest shows itself on CrestData.IsVisible),
+        // so when this list disagrees with the game's the answer is always in
+        // these four flags rather than in our code.
+        var report = new System.Text.StringBuilder("[DsCrest]");
+        foreach (var c in crests)
+        {
+            if (c == null) continue;
+            try
+            {
+                report.Append(' ').Append(c.name)
+                      .Append(c.IsVisible ? "=show" : "=hide")
+                      .Append("(unlocked=").Append(c.IsUnlocked)
+                      .Append(" hidden=").Append(c.IsHidden)
+                      .Append(" upgraded=").Append(c.IsUpgradedVersionUnlocked).Append(')');
+            }
+            catch { }
+        }
+        Debug.Log(report.ToString());
+
+        const int columns = 4;
+        const float cellW = 280f, cellH = 205f, gap = 14f;
+        float left = (panelW - (columns * cellW + (columns - 1) * gap)) * 0.5f;
+        float top = 24f;
+        int shown = 0;
+
+        foreach (var crest in crests)
+        {
+            if (crest == null) continue;
+            // The game's own test, and it is not simply "unlocked". IsVisible
+            // also hides a crest whose UPGRADED version has been unlocked,
+            // which is why both Hunter's Crests were listed: the base one stays
+            // unlocked forever once its evolved form exists, and only the
+            // evolved one should be offered. It also hides a crest marked
+            // hidden unless it happens to be the one equipped.
+            bool ok = false;
+            try { ok = crest.IsVisible; } catch { }
+            if (!ok) continue;
+
+            int col = shown % columns, row = shown / columns;
+            float x = left + col * (cellW + gap);
+            float y = top + row * (cellH + gap);
+            if (y + cellH > bodyH) break;
+            shown++;
+
+            var cell = DsWidgets.Rect(_picker, "crest" + shown);
+            DsWidgets.Place(cell, x, y, cellW, cellH);
+
+            Sprite art = null;
+            try { art = crest.CrestSprite; } catch { }
+            var img = DsWidgets.Icon(cell, "art", art, Color.white);
+            DsWidgets.Place(img.rectTransform, (cellW - 140f) * 0.5f, 0f, 140f, 140f);
+
+            bool equipped = crest.name == current;
+            string label = "";
+            try { label = DsText(crest.DisplayName); } catch { }
+            var name = DsWidgets.Label(cell, "name", label, DsTheme.RowSize,
+                                       equipped ? DsTheme.Accent : DsTheme.Ink,
+                                       TmpAlign.Center);
+            if (name != null) DsWidgets.Place(name.rectTransform, 0f, 146f, cellW, 52f);
+
+            _crestCells.Add(new CrestCell
+            {
+                Id = crest.name,
+                Art = img,
+                Root = cell,
+                // The picker fills the body, so its space is the body's.
+                Hit = new Rect(x, DsLayout.Current.Body.y + y, cellW, cellH),
+            });
+        }
+    }
+
+    void ChooseCrest(string crestId)
+    {
+        try
+        {
+            ToolItemManager.SetEquippedCrest(crestId);
+            try { ToolItemManager.SendEquippedChangedEvent(); } catch { }
+            // The ring, its slots and the tool list all describe the crest that
+            // was equipped a moment ago.
+            Refresh(force: true);
+            _socketTool = null;
+        }
+        catch (Exception e) { Debug.LogWarning("[DualScreen] crest change failed: " + e.Message); }
+        ShowCrestPicker(false);
+    }
+
     // ── EQUIP / UNEQUIP ─────────────────────────────────────────────────────
 
     /// <summary>
@@ -587,8 +742,21 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     /// </summary>
     public void CollectActions(List<DsAction> into)
     {
+        if (!AtBench()) return;
+
+        // While choosing, the only thing to offer is a way out. Equipping a
+        // tool into a crest you are in the middle of replacing is not a useful
+        // thing to be able to do.
+        if (_choosingCrest)
+        {
+            into.Add(new DsAction("BACK", () => ShowCrestPicker(false)));
+            return;
+        }
+
+        into.Add(new DsAction("CREST", () => ShowCrestPicker(true)));
+
         var tool = SelectedTool();
-        if (tool == null || !AtBench()) return;
+        if (tool == null) return;
 
         bool equipped = false;
         try { equipped = ToolItemManager.IsToolEquipped(tool.name); } catch { }
