@@ -156,7 +156,6 @@ public class DsTitleCard
         {
             string code = TeamCherry.Localization.Language.CurrentLanguage().ToString();
             if (code == "ZH" && lang.chineseSprite != null) return lang.chineseSprite;
-            if (code == "ZH_TW" && lang.traditionalChineseSprite != null) return lang.traditionalChineseSprite;
             return lang.englishSprite;
         }
         catch { return lang.englishSprite; }
