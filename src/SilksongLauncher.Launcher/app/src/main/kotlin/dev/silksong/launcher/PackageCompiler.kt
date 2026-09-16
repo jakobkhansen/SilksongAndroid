@@ -102,6 +102,21 @@ object PackageCompiler {
         return csc
     }
 
+    /**
+     * What a failed csc run is reported as.
+     *
+     * The compiler does not always fail with a CS diagnostic -- a bad response
+     * file or a missing reference path can end it with nothing on stdout at
+     * all -- so the tail of whatever it DID say goes in the message rather
+     * than an unhelpful "0 errors".
+     */
+    private fun compileFailure(what: String, result: Toolchain.Result): IOException {
+        val errors = result.output.lineSequence().filter { it.contains("error CS") }.toList()
+        val detail = errors.firstOrNull()
+            ?: result.output.trim().lines().takeLast(3).joinToString(" | ").ifBlank { "exit ${result.code}" }
+        return IOException("$what did not compile (${errors.size} errors): ${detail.trim().take(400)}")
+    }
+
     /** Where the compiled overrides go, for Il2cppConverter to prefer. */
     fun outputDir(root: File): File = File(root, "packages")
 
@@ -167,19 +182,11 @@ object PackageCompiler {
             for (f in cs) w.println("\"$f\"")
         }
 
-        val result = MonoRuntime.exec(
-            context,
-            csc,
-            listOf("@${rsp.absolutePath}"),
-            cwd = root,
-        )
-        if (!result.ok || out.length() <= 0) {
-            val errors = result.output.lineSequence().filter { it.contains("error CS") }.toList()
-            throw IOException(
-                "the patches did not compile (${errors.size} errors): " +
-                    (errors.firstOrNull() ?: "exit ${result.code}").trim().take(300),
-            )
+        val result = MonoRuntime.exec(context, csc, listOf("@${rsp.absolutePath}"), cwd = root) { line ->
+            val t = line.trimEnd()
+            if (t.isNotEmpty()) LauncherLog.log("csc: $t")
         }
+        if (!result.ok || out.length() <= 0) throw compileFailure("the patches", result)
         LauncherLog.log("SilksongPatches.dll: ${out.length()} bytes from ${cs.size} sources")
         send(Progress("Patches ready", 1f, ""))
     }.flowOn(Dispatchers.IO)
@@ -262,16 +269,7 @@ object PackageCompiler {
             "SafeIo compile: exit=${result.code} ok=${result.ok} " +
                 "output=${result.output.length}B dll=${out.length()}B",
         )
-        if (!result.ok || out.length() <= 0) {
-            val errors = result.output.lineSequence().filter { it.contains("error CS") }.toList()
-            // The compiler does not always fail with a CS diagnostic -- a bad
-            // response file or a missing reference path can end it with
-            // nothing on stdout at all -- so the tail of whatever it DID say
-            // goes in the message rather than an unhelpful "0 errors".
-            val detail = errors.firstOrNull()
-                ?: result.output.trim().lines().takeLast(3).joinToString(" | ").ifBlank { "exit ${result.code}" }
-            throw IOException("SafeIo did not compile (${errors.size} errors): ${detail.trim().take(400)}")
-        }
+        if (!result.ok || out.length() <= 0) throw compileFailure("SafeIo", result)
         LauncherLog.log("SilksongIo.dll: ${out.length()} bytes from ${cs.size} source(s)")
         send(Progress("Save fix ready", 1f, ""))
     }.flowOn(Dispatchers.IO)
@@ -380,15 +378,7 @@ object PackageCompiler {
                 val t = line.trimEnd()
                 if (t.isNotEmpty()) LauncherLog.log("csc: $t")
             }
-            if (!result.ok || out.length() <= 0) {
-                val errors = result.output.lineSequence().filter { it.contains("error CS") }.toList()
-                val detail = errors.firstOrNull()
-                    ?: result.output.trim().lines().takeLast(3).joinToString(" | ")
-                        .ifBlank { "exit ${result.code}" }
-                throw IOException(
-                    "$assembly did not compile (${errors.size} errors): ${detail.trim().take(400)}",
-                )
-            }
+            if (!result.ok || out.length() <= 0) throw compileFailure(assembly, result)
             LauncherLog.log("$assembly.dll: ${out.length()} bytes from ${cs.size} sources")
         }
         send(Progress("Mod loader ready", 1f, ""))
@@ -562,13 +552,7 @@ object PackageCompiler {
             sink.flush(); sink.close()
         }
 
-        if (!result.ok || out.length() <= 0) {
-            val errors = result.output.lineSequence().filter { it.contains("error CS") }.toList()
-            throw IOException(
-                "the Input System did not compile (${errors.size} errors): " +
-                    (errors.firstOrNull() ?: "exit ${result.code}").trim().take(300),
-            )
-        }
+        if (!result.ok || out.length() <= 0) throw compileFailure("the Input System", result)
         LauncherLog.log("Unity.InputSystem.dll: ${out.length()} bytes from ${cs.size} sources")
         send(Progress("Input System ready", 1f, "${out.length() / 1024} KB"))
     }.flowOn(Dispatchers.IO)

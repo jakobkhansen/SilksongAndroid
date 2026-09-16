@@ -437,6 +437,35 @@ object MonoRuntime {
             exitCode = code
         }
 
+        // What the program printed, when fd 1 did not have it.
+        //
+        // The redirect above catches everything the NATIVE side writes, and
+        // nothing a managed program does: .NET on Android sends Console to the
+        // Android log under the tag "DOTNET" rather than to standard output,
+        // so a compiler that fails with a screen of diagnostics leaves the
+        // capture file empty and the launcher reports "0 errors". The log is
+        // the only place those lines exist, and a process may read its own.
+        //
+        // Only on the way out of a run that failed: a run that succeeded has
+        // nothing worth the round trip, and the cost lands on the path that is
+        // already about to throw.
+        if (collected.isEmpty() && (exitCode ?: MonoService.FAILED) != 0 && pid != 0) {
+            runCatching {
+                val logcat = ProcessBuilder("logcat", "-d", "--pid=$pid", "-s", "DOTNET")
+                    .redirectErrorStream(true).start()
+                logcat.inputStream.bufferedReader().forEachLine { line ->
+                    // "I/DOTNET  ( 6557): the line" -- the prefix is logcat's,
+                    // not the program's, and callers parse what the program said.
+                    val said = line.substringAfter("): ", "").trimEnd()
+                    if (said.isNotEmpty() && collected.length < MAX_CAPTURED) {
+                        collected.append(said).append('\n')
+                        onLine(said)
+                    }
+                }
+                logcat.waitFor()
+            }
+        }
+
         if (died) {
             val death = deathOf(context, slot, pid, startedWall)
             lowMemory = death.lowMemory
