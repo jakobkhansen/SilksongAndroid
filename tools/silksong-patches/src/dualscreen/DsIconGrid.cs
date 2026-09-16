@@ -123,6 +123,30 @@ public class DsIconGrid
     // one alone is pushed back out far enough to read as a bracket around a
     // number rather than a bracket through one.
     const float BadgeClearance = 10f;
+    // How far the count's figure sits INSIDE the art's bottom-right corner, as
+    // a fraction of the cell.
+    //
+    // Measured from the art rather than from the cell, which is the thing that
+    // was not obvious: the icon is inset by _iconPad, so a box ending flush
+    // with the CELL leaves the figure hanging off the sprite's corner rather
+    // than sitting on it. The overlap has to clear that padding before it
+    // starts biting into the art at all.
+    //
+    // A knob, because it is judged by eye and DsConfig only costs an app
+    // restart rather than a rebuild.
+    static float BadgeOverlapFrac =>
+        Mathf.Clamp(DsConfig.Int("badge_overlap_pct", 14), 0, 40) / 100f;
+
+    /// <summary>
+    /// Backed off from the art's corner on both axes, after the overlap has
+    /// been applied. Judged on the panel: the figure sat correctly on the art
+    /// but a little too far into it, and the same amount suits both axes even
+    /// though what they are measured from differs.
+    /// </summary>
+    static float BadgeBackOff => DsConfig.Int("badge_backoff_px", 10);
+
+    /// <summary>Extra back-off across only, on top of the shared amount.</summary>
+    static float BadgeBackOffX => DsConfig.Int("badge_backoff_x_px", 5);
 
     // ...which puts that bracket outside its cell, and the scroll mask is sized
     // to the columns exactly, so on the last column and the bottom row it was
@@ -677,9 +701,35 @@ public class DsIconGrid
             var icon = DsWidgets.Icon(root, "icon", null, Color.white);
             DsWidgets.Stretch(icon.rectTransform, _iconPad);
 
-            var badge = DsWidgets.Label(root, "badge", "", DsTheme.SmallSize,
-                                        DsTheme.Accent, TmpAlign.BottomRight);
-            if (badge != null) DsWidgets.Stretch(badge.rectTransform, 4f);
+            // The count sits ON the art's bottom-right corner, overlapping it,
+            // which is where the game puts its own amountText. Created after
+            // the icon, so it draws over it.
+            // White, not the panel's gold accent: in the game's inventory the
+            // count is plain white ink on the art, and gold is reserved here
+            // for things you can act on.
+            //
+            // Sized against the cell rather than from the shared small size, so
+            // it stays readable at arm's length instead of shrinking away in a
+            // corner, and large enough to read as a quantity on the art rather
+            // than as a footnote to it.
+            float badgeSize = Mathf.Max(30f, _cell * 0.32f);
+            var badge = DsWidgets.Label(root, "badge", "", badgeSize,
+                                        Color.white, TmpAlign.BottomRight);
+            if (badge != null)
+            {
+                float bw = _cell * 0.66f;
+                float bh = badgeSize * 1.25f;
+                // The two axes are not the same job. Across, the figure bites
+                // into the art so it reads as part of the item rather than as a
+                // label beside it. Down, it wants to sit ON the art's bottom
+                // edge -- the counts in the game's own inventory hang off the
+                // foot of the sprite, and pulling them up by the same amount
+                // they are pulled in left them floating in the middle of it.
+                float insetX = _iconPad + _cell * BadgeOverlapFrac - BadgeBackOff - BadgeBackOffX;
+                float insetY = _iconPad - BadgeBackOff;
+                DsWidgets.Place(badge.rectTransform,
+                                _cell - bw - insetX, _cell - bh - insetY, bw, bh);
+            }
 
             _cells.Add(new Cell { Root = root, Icon = icon, Badge = badge });
         }
