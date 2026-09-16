@@ -60,6 +60,7 @@ public class DsHornetPanel
     readonly List<Slot> _skills = new List<Slot>();
     // The currency counters' boxes, in art space. They are not slots.
     Rect _rosaryArt, _shellArt;
+    float _countY, _rosaryTextX, _shellTextX;
 
     float _x, _y, _w, _h;
     float _artScale = 1f, _artX;
@@ -219,12 +220,18 @@ public class DsHornetPanel
 
         // The two counters are tappable as well, which they were not: they are
         // drawn straight onto the panel rather than through MakeSlot, so
-        // RebuildHits -- which walks the slots -- never saw them. Their boxes
-        // are kept in ART space, like everything else here, and converted the
-        // same way. Each covers its icon AND its number, because the number is
-        // the larger target and the one the eye goes to.
-        _rosaryArt = new Rect(12f, curY - 6f, 248f, 70f);
-        _shellArt = new Rect(w * 0.5f + 12f, curY - 6f, 278f, 70f);
+        // RebuildHits -- which walks the slots -- never saw them.
+        //
+        // Their boxes are finished in RefreshCounts, once there is a number in
+        // them. A label's RECT is generous -- it has to hold "800 / 800" -- but
+        // the text inside it is usually much shorter, and a box drawn to the
+        // rect put the bottom-right bracket out in empty space to the right of
+        // the figure.
+        _countY = curY - 6f;
+        _rosaryTextX = 84f;
+        _shellTextX = w * 0.5f + 84f;
+        _rosaryArt = new Rect(12f, _countY, 248f, 70f);
+        _shellArt = new Rect(w * 0.5f + 12f, _countY, 278f, 70f);
     }
 
     Slot MakeSlot(string name, float x, float y, float w, float h)
@@ -483,6 +490,43 @@ public class DsHornetPanel
 
         if (_rosaryIcon != null) _rosaryIcon.enabled = _rosaryIcon.sprite != null;
         if (_shellIcon != null) _shellIcon.enabled = _shellIcon.sprite != null;
+
+        // Close the counters' boxes on the right at the end of the FIGURE
+        // rather than at the end of the label that holds it.
+        _rosaryArt = CountBox(_rosaries, 12f, _rosaryTextX);
+        _shellArt = CountBox(_shells, _shellTextX - 72f, _shellTextX);
+    }
+
+    /// <summary>
+    /// A counter's box: from its icon's left edge to the right edge of the text
+    /// actually drawn, which is what the cursor should frame.
+    ///
+    /// preferredWidth is the width the string WANTS, independent of the rect it
+    /// was given, so it tracks "212" growing into "1200" without the box ever
+    /// standing off the end of a short one.
+    /// </summary>
+    Rect CountBox(TmpText label, float left, float textX)
+    {
+        float right = textX + 120f;      // a sane width if TMP cannot answer
+        if (label != null)
+        {
+            try
+            {
+                // GetPreferredValues(text), not preferredWidth. The latter is
+                // derived from the layout the label has already been given and
+                // came back near the RECT's width -- which is sized for
+                // "800 / 800" and left the box for "212" standing well past the
+                // end of the figure. Asking for the string's own measurement
+                // sidesteps the rect entirely.
+                float w = 0f;
+                string s = label.text;
+                if (!string.IsNullOrEmpty(s)) w = label.GetPreferredValues(s).x;
+                if (w <= 1f) w = label.preferredWidth;
+                if (w > 1f) right = textX + w;
+            }
+            catch { }
+        }
+        return new Rect(left, _countY, Mathf.Max(60f, right - left), 70f);
     }
 
     /// <summary>True if the tap was ours.</summary>
