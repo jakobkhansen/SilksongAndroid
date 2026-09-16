@@ -55,6 +55,10 @@ public class DsLoadoutScreen : IDsScreen
     const int   ListColumns = 3;
     const float SlotIcon = 82f;
     const float ExtraIcon = 74f;
+    // How strongly the crest artwork itself is drawn. A knob, like the cursor's
+    // sizes, because it is judged by eye against the tools on top of it.
+    static float CrestArtAlpha =>
+        Mathf.Clamp01(DsConfig.Int("crest_art_alpha", 75) / 100f);
 
     RectTransform _crestBox, _host;
     Image _crestImage;
@@ -202,7 +206,11 @@ public class DsLoadoutScreen : IDsScreen
                 _crestImage.sprite = art;
                 _crestImage.useSpriteMesh = true;
                 _crestImage.preserveAspect = true;
-                _crestImage.color = Color.white;
+                // Held back rather than drawn at full strength. The crest is the
+                // BACKDROP its slots sit on, and at full white it competed with
+                // the tools socketed into it -- which are the things you are
+                // looking at and the things the cursor lands on.
+                _crestImage.color = new Color(1f, 1f, 1f, CrestArtAlpha);
             }
             else
             {
@@ -482,7 +490,16 @@ public class DsLoadoutScreen : IDsScreen
             float size = rt.sizeDelta.x;
             if (p.x >= sx && p.x <= sx + size && p.y >= sy && p.y <= sy + size)
             {
+                // Select it in the list, so the description pane fills and the
+                // grid knows what is chosen...
                 _grid.SelectByKey(tool.name);
+
+                // ...but keep the cursor HERE, on the socket that was actually
+                // tapped, rather than letting it jump across to the same tool's
+                // cell in the list. The socket is what the eye is on.
+                _grid.SetExternalTarget(
+                    new Rect(sx, sy - bodyTop, size, size),
+                    DsTheme.ToolTypeColor(tool.Type), "socket:" + tool.name);
                 return;
             }
         }

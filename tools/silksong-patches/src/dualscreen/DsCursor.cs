@@ -45,28 +45,46 @@ public class DsCursor
     // of feel against art it has to frame, and a rebuild costs ten minutes.
     static float ConfiguredCornerPx => Mathf.Clamp(DsConfig.Int("cursor_corner_px", 64), 8f, 240f);
 
-    // ZERO would be what the game does: InventoryCursor puts each corner at
-    // boxOffset +/- boxScale/2, i.e. exactly ON the corner of the thing
-    // selected. Our cells carry more air around their art than the game's do,
-    // so a small inset brings the brackets in against the icon rather than
-    // leaving them floating in the gap between cells.
+    // A flat amount pulled off every cursor, on top of whatever box the screen
+    // hands over.
     //
-    // Insetting by half the bracket's own size -- which looks like the obvious
-    // reading of "inside the corner" -- walks them far too far in: on a 127 px
-    // cell it put the bottom-right bracket in the middle of the item's art.
-    static float ConfiguredInsetPx => DsConfig.Int("cursor_inset_px", 12);
+    // The game needs none of this: its boxes are BoxCollider2Ds authored per
+    // item, and its brackets sit exactly on their corners. Ours are derived --
+    // from a sprite's trimmed mesh, or a widget's fitted art box -- and a
+    // derived box is honest about the art's extent rather than about where a
+    // designer would have drawn the frame. Consistently a little wide, in other
+    // words, which is exactly what a constant fixes.
+    static float ExtraInsetPx => DsConfig.Int("cursor_inset_px", 12);
 
     float _cornerPx;
 
     /// <summary>
-    /// How far inside the target's corner each bracket's centre sits.
+    /// How far inside the target's corner each bracket's centre sits, in pixels.
     ///
-    /// Adjustable because not every target is a square of art. The Journal's
-    /// portraits are CIRCLES, and a circle inscribed in a square leaves its
-    /// corners empty -- the nearest ink is about 0.29r along the diagonal, so
-    /// brackets placed at the bounding box float off the picture.
+    /// Used when <see cref="CornerInsetFraction"/> is zero. Adjustable because
+    /// not every target is a square of art: the Journal's portraits are CIRCLES,
+    /// and a circle inscribed in a square leaves its corners empty -- the
+    /// nearest ink is about 0.29r along the diagonal, so brackets placed at the
+    /// bounding box float off the picture.
     /// </summary>
     public float CornerInset { get; set; }
+
+    /// <summary>
+    /// Inset as a FRACTION of the target's shorter side, which beats a pixel
+    /// count whenever one cursor has to frame things of very different sizes.
+    ///
+    /// The Inventory's cursor lands on a 96 px tool socket, a 210 px mask and a
+    /// needle nearly 600 px tall. A fixed inset that looks tight on the mask is
+    /// lost on the socket, and one that suits the socket leaves the mask
+    /// bracketed at arm's length. A fraction is tight on all of them.
+    ///
+    /// The shorter side, not each axis independently: insetting a tall narrow
+    /// needle by a fraction of its HEIGHT would pull the brackets most of the
+    /// way to its middle. Zero means use the pixel value instead, which is what
+    /// the tab strip does -- its icons are all one size, and it was judged at a
+    /// specific one.
+    /// </summary>
+    public float CornerInsetFraction { get; set; }
 
     // The light is a little larger than the item, the way the game's is: it
     // reads as something lit from behind rather than as a panel behind it.
@@ -101,7 +119,6 @@ public class DsCursor
     {
         DefaultGlow = new Color(1f, 0.94f, 0.72f, 0.30f);
         _cornerPx = ConfiguredCornerPx;
-        if (CornerInset <= 0f) CornerInset = ConfiguredInsetPx;
         // Behind the content...
         _glowRoot = DsWidgets.Rect(parent, "cursor-glow");
         DsWidgets.Stretch(_glowRoot);
@@ -190,6 +207,44 @@ public class DsCursor
         Apply(_t);
     }
 
+    /// <summary>Where the cursor is right now, in its parent's space.</summary>
+    public Rect Current => _now;
+
+    /// <summary>The tint it is showing right now, for handing over.</summary>
+    public Color CurrentGlow => _nowColor;
+
+    /// <summary>
+    /// Put the cursor somewhere without animating, and leave it ready to
+    /// animate FROM there.
+    ///
+    /// For handing a selection between two cursors that live in different
+    /// parents -- the grid's, which is inside the scroll mask, and the screen's,
+    /// which is not. Seeding the incoming one with the outgoing one's position
+    /// is what makes the handover look like one cursor crossing a boundary
+    /// rather than two cursors blinking.
+    /// </summary>
+    public void Seed(Rect where, Color glow)
+    {
+        _from = _to = _now = where;
+        _fromColor = _toColor = _nowColor = glow;
+        _t = 1f;
+        _key = null;          // the next MoveTo counts as a new target
+        if (!_shown) { _shown = true; SetActive(true); }
+        Apply(1f);
+    }
+
+    /// <summary>
+    /// Keep the brackets above anything added to the parent since Build.
+    ///
+    /// The grid pools its cells and rebuilds its headers, and every one of those
+    /// arrives as a later sibling than the cursor -- which would draw the icons
+    /// over the brackets.
+    /// </summary>
+    public void BringToFront()
+    {
+        if (_cornerRoot != null) _cornerRoot.SetAsLastSibling();
+    }
+
     public void Hide()
     {
         if (!_shown) return;
@@ -228,8 +283,19 @@ public class DsCursor
             _glow.color = _glow.sprite != null ? _nowColor : Color.clear;
         }
 
-        PlaceCorner(_tl, _now.x + CornerInset, _now.y + CornerInset);
-        PlaceCorner(_br, _now.xMax - CornerInset, _now.yMax - CornerInset);
+        float inset = Inset(_now);
+        PlaceCorner(_tl, _now.x + inset, _now.y + inset);
+        PlaceCorner(_br, _now.xMax - inset, _now.yMax - inset);
+    }
+
+    /// <summary>The inset actually used for the rect the cursor is on.</summary>
+    float Inset(Rect r)
+    {
+        float shorter = Mathf.Min(r.width, r.height);
+        float based = CornerInsetFraction > 0f ? shorter * CornerInsetFraction : CornerInset;
+        // Never more than a third of the shorter side, or the two brackets
+        // would cross over each other on a small target.
+        return Mathf.Min(based + ExtraInsetPx, shorter / 3f);
     }
 
     // Corners are placed by their CENTRE, so the art sits astride the item's

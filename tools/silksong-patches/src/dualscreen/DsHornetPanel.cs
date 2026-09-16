@@ -39,6 +39,14 @@ public class DsHornetPanel
         public RectTransform Root;
         public readonly List<Image> Images = new List<Image>();
         public string Name, Desc;
+        /// <summary>
+        /// The art's DRAWN box inside Root, in art space. Draw fits each widget
+        /// to its own aspect and centres it, so for anything that is not the
+        /// shape of its slot -- the needle above all, 96 wide in a box nearly
+        /// 600 tall -- the slot is mostly empty and framing it puts the cursor
+        /// a long way off the art.
+        /// </summary>
+        public Rect Art;
     }
 
     readonly List<Hit> _hits = new List<Hit>();
@@ -50,6 +58,8 @@ public class DsHornetPanel
 
     Slot _needle, _mask, _spool, _core, _ring;
     readonly List<Slot> _skills = new List<Slot>();
+    // The currency counters' boxes, in art space. They are not slots.
+    Rect _rosaryArt, _shellArt;
 
     float _x, _y, _w, _h;
     float _artScale = 1f, _artX;
@@ -206,6 +216,15 @@ public class DsHornetPanel
         DsWidgets.Place(_shellIcon.rectTransform, w * 0.5f + 18f, curY, 58f, 58f);
         _shells = DsWidgets.Label(_panel, "shell-n", "", DsTheme.RowSize, DsTheme.Ink);
         if (_shells != null) DsWidgets.Place(_shells.rectTransform, w * 0.5f + 84f, curY + 6f, 200f, 46f);
+
+        // The two counters are tappable as well, which they were not: they are
+        // drawn straight onto the panel rather than through MakeSlot, so
+        // RebuildHits -- which walks the slots -- never saw them. Their boxes
+        // are kept in ART space, like everything else here, and converted the
+        // same way. Each covers its icon AND its number, because the number is
+        // the larger target and the one the eye goes to.
+        _rosaryArt = new Rect(12f, curY - 6f, 248f, 70f);
+        _shellArt = new Rect(w * 0.5f + 12f, curY - 6f, 278f, 70f);
     }
 
     Slot MakeSlot(string name, float x, float y, float w, float h)
@@ -342,6 +361,7 @@ public class DsHornetPanel
         }
         float offX = (boxW - artW) * 0.5f;
         float offY = (boxH - artH) * 0.5f;
+        slot.Art = new Rect(offX, offY, artW, artH);
 
         for (int i = 0; i < w.Pieces.Count; i++)
         {
@@ -405,16 +425,46 @@ public class DsHornetPanel
             if (s.Root == null || s.Images.Count == 0) continue;
             if (string.IsNullOrEmpty(s.Name) && string.IsNullOrEmpty(s.Desc)) continue;
 
+            // The art's box within the slot, not the slot's. Falls back to the
+            // whole slot for anything that never recorded one.
+            Rect art = s.Art.width > 0f && s.Art.height > 0f
+                     ? s.Art
+                     : new Rect(0f, 0f, s.Root.sizeDelta.x, s.Root.sizeDelta.y);
+
             _hits.Add(new Hit
             {
-                X = _x + _artX + s.Root.anchoredPosition.x * _artScale,
-                Y = DsLayout.Current.Body.y + _y - s.Root.anchoredPosition.y * _artScale,
-                W = s.Root.sizeDelta.x * _artScale,
-                H = s.Root.sizeDelta.y * _artScale,
+                X = _x + _artX + (s.Root.anchoredPosition.x + art.x) * _artScale,
+                Y = DsLayout.Current.Body.y + _y + (-s.Root.anchoredPosition.y + art.y) * _artScale,
+                W = art.width * _artScale,
+                H = art.height * _artScale,
                 Name = s.Name,
                 Desc = s.Desc,
             });
         }
+
+        // The counters last, so a skill or the needle overlapping them would
+        // win on area; in practice they sit alone at the foot of the column.
+        //
+        // The description is the count itself. The game has no name or prose
+        // for either currency -- CurrencyType is a bare enum -- so rather than
+        // invent flavour text, the pane restates what is selected, which is the
+        // one thing about a counter worth reading.
+        AddRectHit(_rosaryArt, "Rosaries", _rosaries != null ? _rosaries.text : null);
+        AddRectHit(_shellArt, "Shell Shards", _shells != null ? _shells.text : null);
+    }
+
+    void AddRectHit(Rect art, string name, string desc)
+    {
+        if (art.width <= 0f || art.height <= 0f) return;
+        _hits.Add(new Hit
+        {
+            X = _x + _artX + art.x * _artScale,
+            Y = DsLayout.Current.Body.y + _y + art.y * _artScale,
+            W = art.width * _artScale,
+            H = art.height * _artScale,
+            Name = name,
+            Desc = desc ?? "",
+        });
     }
 
     void RefreshCounts()

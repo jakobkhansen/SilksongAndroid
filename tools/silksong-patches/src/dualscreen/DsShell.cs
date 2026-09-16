@@ -29,6 +29,8 @@ public class DsShell
         public TmpText TabLabel;
         /// <summary>Where the caret sits for this tab, in the tab bar's space.</summary>
         public Rect CaretRect;
+        /// <summary>The icon's outer box in the strip, which CaretRect is centred in.</summary>
+        public Rect CaretBox;
         public bool WarnedMissingIcon;
         public bool Built;
         public bool Broken;
@@ -233,13 +235,13 @@ public class DsShell
                             (bounds.height - size) * 0.5f, size, size);
             e.TabIcon = DsWidgets.Icon(art, "icon", null, Color.white);
 
-            // The caret frames the ICON, not the larger box the icon is fitted
-            // inside. Bracketing the box left the brackets sitting well clear of
-            // the art on every tab, because the icon is 88 px inside a 144 px
-            // frame. RefreshTabArt fits the sprite to the same size.
+            // Where the caret sits for this tab, in the tab bar's space. Starts
+            // as the icon's whole box and is narrowed to the art itself once
+            // the sprite arrives -- see RefreshTabArt.
             float icon = Mathf.Min(88f, bounds.height - 72f);
-            e.CaretRect = new Rect(bounds.x + (bounds.width - icon) * 0.5f,
-                                   (bounds.height - icon) * 0.5f, icon, icon);
+            e.CaretBox = new Rect(bounds.x + (bounds.width - icon) * 0.5f,
+                                  (bounds.height - icon) * 0.5f, icon, icon);
+            e.CaretRect = e.CaretBox;
 
             string title = "?";
             try { title = e.Screen.Title; } catch { }
@@ -251,6 +253,9 @@ public class DsShell
         // Built after the tabs so its brackets draw over them, and its light
         // goes at index 1 -- after the strip's opaque black backdrop, which
         // would otherwise cover it completely.
+        //
+        // No box adjustment of its own: it frames the icon's fitted art, and
+        // DsCursor's shared constant brings the brackets in from there.
         _tabCursor.Build(_tabBar, glowIndex: 1);
     }
 
@@ -262,8 +267,9 @@ public class DsShell
 
         try
         {
-            foreach (var e in _entries)
+            for (int i = 0; i < _entries.Count; i++)
             {
+                var e = _entries[i];
                 var sprite = DsGameArt.TabIcon(e.Pane);
                 if (e.TabIcon.sprite != sprite)
                 {
@@ -272,6 +278,19 @@ public class DsShell
                     {
                         float size = Mathf.Min(88f, _layout.Tabs.height - 72f);
                         DsWidgets.FitCentred(e.TabIcon, sprite, size, size);
+                        // FitCentred sizes the rect to the sprite's own aspect
+                        // and shifts it so the trimmed mesh is centred, so the
+                        // rect it leaves IS the visible art -- which is the box
+                        // the caret should be on, rather than the square the
+                        // icon was fitted into. Same reasoning as IconRect.
+                        var rt = e.TabIcon.rectTransform;
+                        Vector2 half = rt.sizeDelta * 0.5f;
+                        Vector2 mid = new Vector2(
+                            e.CaretBox.x + e.CaretBox.width * 0.5f + rt.anchoredPosition.x,
+                            e.CaretBox.y + e.CaretBox.height * 0.5f - rt.anchoredPosition.y);
+                        e.CaretRect = new Rect(mid.x - half.x, mid.y - half.y,
+                                               rt.sizeDelta.x, rt.sizeDelta.y);
+                        if (i == _active) Paint();
                         Debug.Log("[DsTabs] " + e.Screen.Id + " icon='" + sprite.name + "'");
                     }
                 }

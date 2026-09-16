@@ -90,15 +90,27 @@ public class DsIconGrid
     const float HeaderRuleH = 52f;
 
     // Selection is drawn by ONE cursor that travels, not by brackets switched
-    // on inside the selected cell -- see DsCursor. It lives in the screen's
-    // host rather than in the grid, so it can also land on things beside the
-    // grid: the needle and the mask in the character column are cursor targets
-    // too, and the cursor crosses between them and the icons.
+    // on inside the selected cell -- see DsCursor. There are two of them, in
+    // two different parents, for one reason:
     //
-    // The cost of leaving the grid is that the grid's scroll mask no longer
-    // clips it, so a selected cell scrolled out of sight would leave its cursor
-    // floating over the column beside it. Paint hides it instead.
+    //   _cursor      lives INSIDE the grid's scroll mask, with the cells. It
+    //                therefore scrolls with the item it is on and is clipped
+    //                exactly as the item is, so a half-scrolled item gets a
+    //                half-drawn cursor and an item scrolled away takes its
+    //                cursor with it. That is what the game does, and it is what
+    //                neither hiding it nor clamping it managed: hiding left a
+    //                selected row with nothing on it, and clamping parked the
+    //                brackets at the top of the column around no item at all.
+    //
+    //   _freeCursor  lives in the screen host, OUTSIDE the mask, for targets
+    //                that are not grid cells: the needle, the mask and the
+    //                counters in the character column, a tool socketed in the
+    //                crest. Those must not be clipped to the grid's column.
+    //
+    // Only one is ever shown, and the one taking over is seeded with the other's
+    // position so the handover reads as a single cursor crossing a boundary.
     readonly DsCursor _cursor = new DsCursor();
+    readonly DsCursor _freeCursor = new DsCursor();
     RectTransform _host;
     // Somewhere other than a cell owns the cursor -- the needle, say. Kept in
     // host space, already converted by whoever set it.
@@ -281,18 +293,21 @@ public class DsIconGrid
                                  DsTheme.InkFaint, TmpAlign.Center);
         if (_empty != null) DsWidgets.Stretch(_empty.rectTransform);
 
-        // Last, and deliberately so. The cursor belongs to the SCREEN rather
-        // than to the grid -- it has to be able to leave the grid and land on
-        // the needle or the mask beside it -- and its brackets only draw over
-        // the icons if nothing is added to the host after them.
+        // Two cursors, two parents -- see the note on the fields.
         //
-        // A tighter inset than the shared default. A tab icon fills its box; a
-        // grid item is art fitted inside a cell with aspect preserved, so there
-        // is usually more air between the icon's box and the ink than the tab
-        // strip has. Its own knob, because the two are judged separately.
+        // The grid's goes in with the cells so the scroll mask clips it; the
+        // free one goes in the host, last, so its brackets draw over everything
+        // the screen put down.
+        //
+        // Both frame the target's box exactly, as InventoryCursor does -- it
+        // puts its corners on boxOffset +/- boxScale/2 and nowhere else. The
+        // game gets away with that because the box is a BoxCollider2D authored
+        // per item, tight around the art; ours is derived instead (see
+        // IconRect, and DsHornetPanel.Slot.Art), and DsCursor's shared constant
+        // takes up the slack a derived box leaves.
         _host = host;
-        _cursor.CornerInset = DsConfig.Int("cursor_inset_grid_px", 22);
-        _cursor.Build(host);
+        _cursor.Build(_grid);
+        _freeCursor.Build(host);
     }
 
     /// <summary>Replace the contents with a single untitled run.</summary>
@@ -370,7 +385,9 @@ public class DsIconGrid
 
     public void Tick()
     {
-        _cursor.Tick(Time.unscaledDeltaTime);
+        float dt = Time.unscaledDeltaTime;
+        _cursor.Tick(dt);
+        _freeCursor.Tick(dt);
         if (!_dirty) return;
         _dirty = false;
         Layout();
@@ -443,6 +460,8 @@ public class DsIconGrid
 
         EnsureCells(_placed.Count);
         Paint();
+        // Headers are rebuilt here, after the cursor, so re-assert its order.
+        _cursor.BringToFront();
     }
 
     void Paint()
@@ -514,33 +533,108 @@ public class DsIconGrid
     {
         if (_hasExternalTarget)
         {
-            _cursor.MoveTo(_externalTarget, _externalGlow, "ext:" + _externalKey);
+            // Handing over from the grid: start the free cursor where the grid's
+            // one is, converted out of grid space, so it travels rather than
+            // reappearing somewhere else.
+            if (_cursor.Visible)
+            {
+                var g = _cursor.Current;
+                _freeCursor.Seed(new Rect(_gridLeft + g.x, DsTheme.Pad + g.y, g.width, g.height),
+                                 _cursor.CurrentGlow);
+                _cursor.Hide();
+            }
+            _freeCursor.MoveTo(_externalTarget, _externalGlow, "ext:" + _externalKey);
             return;
         }
 
-        if (_selected < 0 || _selected >= _flat.Count) { _cursor.Hide(); return; }
+        if (_selected < 0 || _selected >= _flat.Count)
+        {
+            _cursor.Hide(); _freeCursor.Hide(); return;
+        }
 
         for (int i = 0; i < _placed.Count; i++)
         {
             var p = _placed[i];
             if (p.ItemIndex != _selected) continue;
 
-            float y = p.Y - _scroll;
-            // Wholly inside the viewport, not merely touching it: a cursor is
-            // drawn OUTSIDE its cell, so a partly-scrolled one would reach past
-            // the top or bottom of a grid that no longer clips it.
-            if (y < 0f || y + p.H > _gridH) { _cursor.Hide(); return; }
+            // Grid space: the same coordinates the cells are placed in, so the
+            // cursor scrolls and clips with them and needs no clamping.
+            Rect box = IconRect(p, _flat[_selected].Icon);
 
-            // The ICON's box, not the cell's. A cell is deliberately larger than
-            // the art it holds -- that padding is the gap between items -- so
-            // bracketing the cell leaves the caret sitting out in the gutter
-            // rather than around the thing it is pointing at.
-            _cursor.MoveTo(new Rect(_gridLeft + p.X + _iconPad, DsTheme.Pad + y + _iconPad,
-                                    p.W - _iconPad * 2f, p.H - _iconPad * 2f),
-                           _flat[_selected].Glow, _selectedKey);
+            if (_freeCursor.Visible)
+            {
+                var f = _freeCursor.Current;
+                _cursor.Seed(new Rect(f.x - _gridLeft, f.y - DsTheme.Pad, f.width, f.height),
+                             _freeCursor.CurrentGlow);
+                _freeCursor.Hide();
+            }
+            _cursor.MoveTo(box, _flat[_selected].Glow, _selectedKey);
             return;
         }
         _cursor.Hide();
+    }
+
+    /// <summary>
+    /// The box the cursor should frame for a cell: the icon's VISIBLE INK.
+    ///
+    /// This is the one piece of InventoryCursor we cannot copy directly. The
+    /// game reads a BoxCollider2D off the thing selected and puts the brackets
+    /// on its corners exactly -- boxOffset +/- boxScale/2, with no inset at all.
+    /// Those colliders are authored per item, by hand, tight around the art.
+    ///
+    /// We draw our own icons and have no such boxes, so the equivalent has to be
+    /// derived, and the naive derivation is what made the caret look loose. An
+    /// icon's rect is NOT its art:
+    ///
+    ///   * the rect is square while the sprite usually is not, so preserveAspect
+    ///     leaves empty bands down two sides -- worst on the Crest tab, whose
+    ///     tools are mostly taller than they are wide;
+    ///   * and the sprite's own rect includes the transparent padding it was
+    ///     packed with, while useSpriteMesh draws only the TRIMMED mesh inside
+    ///     it. That padding is invisible and was still being framed.
+    ///
+    /// Sprite.bounds is the trimmed mesh, so the ratio of it to the full rect
+    /// gives the ink's size and offset within the drawn icon -- the same
+    /// reasoning DsWidgets.FitCentred uses to centre a trimmed sprite. Framing
+    /// that is as close to the game's hand-made boxes as we can get without
+    /// authoring one per item.
+    /// </summary>
+    Rect IconRect(Placed p, Sprite icon)
+    {
+        float x = p.X + _iconPad;
+        float y = p.Y - _scroll + _iconPad;
+        float w = p.W - _iconPad * 2f;
+        float h = p.H - _iconPad * 2f;
+        if (icon == null) return new Rect(x, y, w, h);
+
+        var full = icon.rect;
+        if (full.width <= 0f || full.height <= 0f) return new Rect(x, y, w, h);
+
+        // preserveAspect fits the sprite's FULL rect into the icon's box.
+        float aspect = full.width / full.height;
+        float dw = w, dh = h;
+        if (w / Mathf.Max(h, 0.0001f) > aspect) dw = h * aspect;
+        else dh = w / Mathf.Max(aspect, 0.0001f);
+        float cx = x + w * 0.5f;
+        float cy = y + h * 0.5f;
+
+        // ...and within that, the ink is the trimmed mesh.
+        float ppu = icon.pixelsPerUnit;
+        if (ppu <= 0f) ppu = 100f;
+        Vector2 unitsFull = new Vector2(full.width / ppu, full.height / ppu);
+        if (unitsFull.x <= 0f || unitsFull.y <= 0f)
+            return new Rect(cx - dw * 0.5f, cy - dh * 0.5f, dw, dh);
+
+        Vector3 size = icon.bounds.size;
+        Vector3 mid = icon.bounds.center;
+        float iw = dw * Mathf.Clamp01(size.x / unitsFull.x);
+        float ih = dh * Mathf.Clamp01(size.y / unitsFull.y);
+        // Sprite bounds are y-up; layout space is y-down.
+        cx += (mid.x / unitsFull.x) * dw;
+        cy -= (mid.y / unitsFull.y) * dh;
+
+        if (iw <= 1f || ih <= 1f) return new Rect(cx - dw * 0.5f, cy - dh * 0.5f, dw, dh);
+        return new Rect(cx - iw * 0.5f, cy - ih * 0.5f, iw, ih);
     }
 
     /// <summary>
@@ -563,6 +657,13 @@ public class DsIconGrid
         PaintCursor();
     }
 
+    /// <summary>
+    /// Kept for callers that used to grow an exact widget box before handing it
+    /// over. They no longer need to: the cursor insets by a fraction of the
+    /// target now, so an exact box is already framed tightly.
+    /// </summary>
+    public float CursorInset => 0f;
+
     void EnsureCells(int needed)
     {
         while (_cells.Count < needed && _cells.Count < 512)
@@ -582,6 +683,11 @@ public class DsIconGrid
 
             _cells.Add(new Cell { Root = root, Icon = icon, Badge = badge });
         }
+
+        // Cells and headers are added to the same parent as the grid's cursor
+        // and therefore arrive as later siblings; without this the icons draw
+        // over the brackets.
+        _cursor.BringToFront();
     }
 
     void PaintDetail()

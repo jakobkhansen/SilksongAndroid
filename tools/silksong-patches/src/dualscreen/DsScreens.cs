@@ -235,6 +235,9 @@ public class DsInventoryScreen : DsGridScreen
         {
             Grid.ShowDetail(name, desc);
             float bodyY = DsLayout.Current.Body.y;
+            // The widget's exact box. No growing: the cursor insets by a
+            // fraction of what it is framing, so it is already tight on a small
+            // counter and on the mask alike.
             Grid.SetExternalTarget(
                 new Rect(layoutRect.x, layoutRect.y - bodyY, layoutRect.width, layoutRect.height),
                 DsGameArt.SelectionCursor().GlowColor, name);

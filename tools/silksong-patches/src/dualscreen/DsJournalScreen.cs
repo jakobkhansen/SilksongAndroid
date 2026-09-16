@@ -162,11 +162,11 @@ public class DsJournalScreen : IDsScreen
         if (_desc != null)
             DsWidgets.Place(_desc.rectTransform, 0f, 68f, DetailW, colH - 76f);
 
-        // Last, so the brackets draw over the portraits. Half of 1 - 1/sqrt2:
-        // the diagonal gap of a circle inscribed in its cell, split across the
-        // two axes.
+        // Inside the scrolling list, with the portraits, so the mask clips the
+        // cursor exactly as it clips them. Half of 1 - 1/sqrt2: the diagonal gap
+        // of a circle inscribed in its cell, split across the two axes.
         _cursor.CornerInset = _cell * 0.1465f;
-        _cursor.Build(host);
+        _cursor.Build(_list);
 
         Refresh(force: true);
     }
@@ -376,6 +376,9 @@ public class DsJournalScreen : IDsScreen
             DsWidgets.Place(_cells[i].Root, x, y, _cell, _cellH);
         }
 
+        // Cells arrive as later siblings than the cursor; without this the
+        // portraits draw over the brackets.
+        _cursor.BringToFront();
         PaintCursor();
     }
 
@@ -393,10 +396,13 @@ public class DsJournalScreen : IDsScreen
         int col = _selected % Columns, row = _selected / Columns;
         float x = col * (_cell + CellGap);
         float y = row * (_cellH + CellGap) - _scroll;
-        if (y < 0f || y + _cell > _listH) { _cursor.Hide(); return; }
 
-        _cursor.MoveTo(new Rect(ListX + x, _listTop + y, _cell, _cell),
-                       null, _entries[_selected].Name);
+        // No clamping and no hiding: the cursor lives in the same scrolling list
+        // as the portraits, so it travels with the one it is on and the list's
+        // mask clips it exactly as it clips the picture. See the note in
+        // DsIconGrid -- clamping parked the brackets at the top of the column
+        // around nothing, and hiding left a selected entry unmarked.
+        _cursor.MoveTo(new Rect(x, y, _cell, _cell), null, _entries[_selected].Name);
     }
 
     void PaintDetail()
