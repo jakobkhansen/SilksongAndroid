@@ -34,7 +34,7 @@ using GlobalEnums;
 using TmpText = TMProOld.TextMeshProUGUI;
 using TmpAlign = TMProOld.TextAlignmentOptions;
 
-public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle
+public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle, IDsTabStrip
 {
     enum State { Idle, NoMap, Map }
 
@@ -60,6 +60,11 @@ public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle
     bool _buttonsShown;
     // The area's name, shown by the shell in the header.
     string _zoneName = "";
+    // Marker mode: which pin is chosen, whether the bin is, and the types the
+    // strip last offered (so a strip index maps back to a marker type).
+    bool _markerMode, _erasing;
+    int _markerPick = -1;
+    readonly List<int> _stripTypes = new List<int>();
     float _holdUntil;
     MapZone _zone = MapZone.NONE;
     float _nextSymbolHunt;
@@ -160,6 +165,7 @@ public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle
 
     public void OnHide()
     {
+        _markerMode = false;
         // Stop rendering the moment the tab goes away. The content is left
         // enabled deliberately: "zones active, display off" is the state the
         // game itself sits in between maps, so there is nothing to restore and
@@ -398,6 +404,10 @@ public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle
 
         if (_state != State.Map) return;
 
+        // Placing and removing happen on a tap; pan and zoom fall through below,
+        // which is what keeps the map usable while pinning.
+        if (_markerMode && g.Type == DsGestureType.Tap) { MarkerTap(p); return; }
+
         switch (g.Type)
         {
             case DsGestureType.Drag:
@@ -408,6 +418,123 @@ public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle
                 if (_mapRect.Contains(p)) _view.Zoom(g.Scale);
                 break;
         }
+    }
+
+    // ── marker mode ─────────────────────────────────────────────────────────
+
+    static bool AnyMarkerUnlocked()
+    {
+        for (int i = 0; i < DsMarkers.TypeCount; i++)
+            if (DsMarkers.Unlocked(i)) return true;
+        return false;
+    }
+
+    void SetMarkerMode(bool on)
+    {
+        _markerMode = on;
+        if (!on) return;
+        // The whole of Pharloom, as the v3 notes ask: a pin is placed against
+        // somewhere you are not standing, so the area you happen to be in is
+        // the wrong frame to choose one on.
+        if (_view != null && _view.Mode != DsMapView.Frame.World)
+            _view.SetMode(DsMapView.Frame.World);
+        if (_markerPick < 0) _markerPick = FirstUnlockedMarker();
+    }
+
+    static int FirstUnlockedMarker()
+    {
+        for (int i = 0; i < DsMarkers.TypeCount; i++)
+            if (DsMarkers.Unlocked(i)) return i;
+        return -1;
+    }
+
+    public bool StripOverride { get { return _markerMode; } }
+
+    public void CollectStrip(List<DsStripItem> into)
+    {
+        _stripTypes.Clear();
+        for (int i = 0; i < DsMarkers.TypeCount; i++)
+        {
+            if (!DsMarkers.Unlocked(i)) continue;
+            int left = DsMarkers.Remaining(i);
+            into.Add(new DsStripItem
+            {
+                Icon = DsGameArt.MarkerIcon(i),
+                Badge = left.ToString(),
+                Selected = !_erasing && _markerPick == i,
+                Dim = left <= 0,
+            });
+            _stripTypes.Add(i);
+        }
+        // The bin last, as the design draws it: with it chosen, a tap on the
+        // map removes rather than places.
+        into.Add(new DsStripItem { Icon = DsTrashArt.Sprite, Selected = _erasing });
+    }
+
+    public void OnStripSelect(int index)
+    {
+        // The strip is rebuilt each frame in this same order, so the index maps
+        // back through the types that were actually offered.
+        if (index >= 0 && index < _stripTypes.Count)
+        {
+            _erasing = false;
+            _markerPick = _stripTypes[index];
+            return;
+        }
+        _erasing = true;      // the bin
+    }
+
+    /// <summary>
+    /// Place or remove a pin under a tap.
+    ///
+    /// Only on a TAP. The map stays pannable and zoomable in this mode, and
+    /// DsInput already tells a tap from a drag, so nothing has to be turned off
+    /// to keep both working.
+    /// </summary>
+    void MarkerTap(Vector2 layoutPoint)
+    {
+        if (_view == null || !_mapRect.Contains(layoutPoint)) return;
+
+        Vector2 uv = new Vector2(
+            (layoutPoint.x - _mapRect.x) / _mapRect.width,
+            // Viewport y counts up; layout counts down.
+            1f - (layoutPoint.y - _mapRect.y) / _mapRect.height);
+
+        // A pin already under the finger is removed whichever mode we are in:
+        // tapping one you can see and having a second appear on top of it is
+        // the more surprising behaviour. The bin then matters for saying "I am
+        // clearing, not placing" before the finger lands.
+        if (RemoveNear(uv)) { _view.RefreshMarkers(); return; }
+        if (_erasing || _markerPick < 0) return;
+
+        Vector2 local;
+        if (!_view.TryToMapLocal(uv, out local)) return;
+        if (DsMarkers.Place(_markerPick, local)) _view.RefreshMarkers();
+    }
+
+    bool RemoveNear(Vector2 uv)
+    {
+        const float grabPx = 44f;
+        float grabU = grabPx / Mathf.Max(1f, _mapRect.width);
+        float grabV = grabPx / Mathf.Max(1f, _mapRect.height);
+        float best = float.MaxValue;
+        int bestType = -1, bestIndex = -1;
+
+        for (int t = 0; t < DsMarkers.TypeCount; t++)
+        {
+            var list = DsMarkers.Placed(t);
+            if (list == null) continue;
+            for (int i = 0; i < list.Count; i++)
+            {
+                Vector2 at;
+                if (!_view.TryToViewport(list[i], out at)) continue;
+                float dx = (at.x - uv.x) / grabU, dy = (at.y - uv.y) / grabV;
+                float d = dx * dx + dy * dy;
+                if (d > 1f || d >= best) continue;
+                best = d; bestType = t; bestIndex = i;
+            }
+        }
+        return bestType >= 0 && DsMarkers.RemoveAt(bestType, bestIndex);
     }
 
     void ToggleMode()
@@ -430,16 +557,27 @@ public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle
         get { return _state == State.Map ? _zoneName : null; }
     }
 
-    public void CollectActions(List<DsAction> into)    {
+    public void CollectActions(List<DsAction> into)
+    {
         // Offered wherever they would do something, which is the same condition
         // the buttons were drawn under before: a map to reframe, or at least a
         // map somewhere to go back to.
         if (_view == null || !_buttonsShown) return;
 
+        if (_markerMode)
+        {
+            into.Add(new DsAction("EXIT", () => SetMarkerMode(false)));
+            return;
+        }
+
         into.Add(new DsAction(
             _view.Mode == DsMapView.Frame.World ? "AREA MAP" : "FULL MAP",
             ToggleMode));
         into.Add(new DsAction("RESET", () => _view.ResetView()));
+        // Only where there is a map to pin things to, and only once the player
+        // has actually found a pin to place.
+        if (_state == State.Map && AnyMarkerUnlocked())
+            into.Add(new DsAction("MARKERS", () => SetMarkerMode(true)));
     }
 }
 #endif

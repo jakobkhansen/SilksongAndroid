@@ -38,6 +38,9 @@ public class DsCursor
 {
     // InventoryCursor.moveTime. A knob, because the right answer is a matter of
     // feel and a rebuild costs about ten minutes; 0 snaps.
+    /// <summary>Shared so other carets travel at the same speed.</summary>
+    public static float MoveSeconds { get { return MoveTime; } }
+
     static float MoveTime => Mathf.Clamp(DsConfig.Int("cursor_move_ms", 150), 0, 2000) / 1000f;
 
     // The brackets are drawn at this size and sit this far inside the corner of

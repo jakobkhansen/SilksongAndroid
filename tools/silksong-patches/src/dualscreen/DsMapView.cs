@@ -882,7 +882,51 @@ public class DsMapView
         return count;
     }
 
+    /// <summary>
+    /// A point on the panel's map rect, as a 0..1 viewport fraction, turned
+    /// into a position in the GAME MAP's local space -- which is the space
+    /// PlayerData.placedMarkers stores pins in.
+    ///
+    /// Through the render camera rather than by arithmetic on the pan and zoom:
+    /// the camera already is the pan and zoom, so asking it cannot drift out of
+    /// step with what is on screen.
+    /// </summary>
+    public bool TryToMapLocal(Vector2 uv, out Vector2 local)
+    {
+        local = Vector2.zero;
+        if (_map == null || _rooms == null) return false;
+        try
+        {
+            Vector3 world = _rooms.ViewportToWorldPoint(new Vector3(uv.x, uv.y, 0f));
+            local = _map.transform.InverseTransformPoint(world);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>The reverse, for finding which pin a tap landed on.</summary>
+    public bool TryToViewport(Vector2 local, out Vector2 uv)
+    {
+        uv = Vector2.zero;
+        if (_map == null || _rooms == null) return false;
+        try
+        {
+            Vector3 world = _map.transform.TransformPoint(local);
+            Vector3 v = _rooms.WorldToViewportPoint(world);
+            uv = new Vector2(v.x, v.y);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Redraw the game's own pin objects after the list changes.</summary>
+    public void RefreshMarkers()
+    {
+        try { if (_map != null) _map.SetupMapMarkers(); } catch { }
+    }
+
     int _worldAreas;
+
 
     // ── framing ─────────────────────────────────────────────────────────────
 

@@ -289,6 +289,56 @@ public static class DsGameArt
         return found;
     }
 
+    // ── map markers ─────────────────────────────────────────────────────────
+
+    static readonly Dictionary<int, Sprite> _markerIcons = new Dictionary<int, Sprite>();
+    static bool _markerIconsSearched;
+
+    /// <summary>
+    /// The pin art for a marker type, taken from the game's own templates.
+    ///
+    /// GameMap keeps mapMarkerTemplates[] indexed by MapMarkerMenu.MarkerTypes
+    /// -- the very prefabs it clones onto the map -- so the icon in our strip is
+    /// the thing the player will see land on it, rather than a second opinion
+    /// about what a pin looks like.
+    /// </summary>
+    public static Sprite MarkerIcon(int type)
+    {
+        Sprite found;
+        if (_markerIcons.TryGetValue(type, out found) && found != null) return found;
+        if (_markerIconsSearched && _markerIcons.Count > 0) return null;
+
+        try
+        {
+            var maps = Resources.FindObjectsOfTypeAll<GameMap>();
+            var field = typeof(GameMap).GetField("mapMarkerTemplates", Priv);
+            if (field == null) { _markerIconsSearched = true; return null; }
+
+            for (int m = 0; m < maps.Length; m++)
+            {
+                var templates = field.GetValue(maps[m]) as GameObject[];
+                if (templates == null) continue;
+                for (int i = 0; i < templates.Length; i++)
+                {
+                    if (templates[i] == null) continue;
+                    var sr = templates[i].GetComponentInChildren<SpriteRenderer>(true);
+                    if (sr != null && sr.sprite != null && !_markerIcons.ContainsKey(i))
+                        _markerIcons[i] = sr.sprite;
+                }
+                if (_markerIcons.Count > 0) break;
+            }
+            if (_markerIcons.Count > 0) _markerIconsSearched = true;
+        }
+        catch (System.Exception e)
+        {
+            _markerIconsSearched = true;
+            Debug.LogWarning("[DualScreen] marker art unavailable: " + e.Message);
+        }
+
+        _markerIcons.TryGetValue(type, out found);
+        return found;
+    }
+
     static Sprite FieldSprite(Component owner, string field)
     {
         try

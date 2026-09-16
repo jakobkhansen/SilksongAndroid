@@ -58,6 +58,12 @@ public class DsShell
     readonly List<DsAction> _actionBuffer = new List<DsAction>();
     // The screen's name in the header, in the space the tools used to fill.
     TmpText _headerTitle;
+    // A screen's replacement tab strip, e.g. the map's marker icons.
+    readonly List<DsStripItem> _stripBuffer = new List<DsStripItem>();
+    readonly List<RectTransform> _stripRoots = new List<RectTransform>();
+    readonly List<Image> _stripIcons = new List<Image>();
+    readonly List<TmpText> _stripBadges = new List<TmpText>();
+    bool _stripBuilt, _stripShown;
     // Starts idle. The shell is built before anything is known about whether a
     // save is loaded, and defaulting to a screen meant the panel opened on an
     // empty Inventory and only corrected itself once the idle grace expired.
@@ -464,6 +470,14 @@ public class DsShell
 
         // The caret goes to the chosen tab, or nowhere if there is not yet an
         // icon under it to bracket.
+        //
+        // Not while a screen owns the strip, though. Paint runs from the art
+        // refresh every second, and putting the tab's caret back each time is
+        // what made the marker strip look like it had a caret stuck on the Map
+        // tab that never moved: the strip's own caret was there all along,
+        // underneath a second one nobody had asked for.
+        if (_stripShown) { _tabCursor.Hide(); return; }
+
         if (_active >= 0 && _active < _entries.Count)
         {
             var e = _entries[_active];
@@ -501,6 +515,215 @@ public class DsShell
         Guard(e, () => e.Screen.Tick(dt));
         RefreshActions(e);
         RefreshTitle(e);
+        RefreshStrip(e);
+        TickStripCaret(dt);
+    }
+
+    /// <summary>
+    /// Let the visible screen replace the tab strip, or put the tabs back.
+    ///
+    /// Pulled every frame like the actions, so a mode that ends -- the map
+    /// leaving marker mode, or the screen changing under it -- restores the
+    /// tabs without anything having to remember to.
+    /// </summary>
+    void RefreshStrip(Entry e)
+    {
+        var source = e.Screen as IDsTabStrip;
+        bool want = false;
+        if (source != null && !e.Broken) { try { want = source.StripOverride; } catch { } }
+
+        if (!want)
+        {
+            if (!_stripShown) return;
+            _stripShown = false;
+            for (int i = 0; i < _stripRoots.Count; i++) DsWidgets.SetActive(_stripRoots[i], false);
+            HideStripCaret();
+            for (int i = 0; i < _entries.Count; i++) DsWidgets.SetActive(_entries[i].Tab, true);
+            Paint();
+            return;
+        }
+
+        _stripBuffer.Clear();
+        Guard(e, () => source.CollectStrip(_stripBuffer));
+        BuildStrip(_stripBuffer.Count);
+
+        if (!_stripShown)
+        {
+            _stripShown = true;
+            for (int i = 0; i < _entries.Count; i++) DsWidgets.SetActive(_entries[i].Tab, false);
+            _tabCursor.Hide();
+        }
+
+        int n = Mathf.Max(1, _stripBuffer.Count);
+        float cell = _w / n;
+        float size = Mathf.Min(96f, _layout.Tabs.height - 40f);
+        Rect caret = new Rect(0f, 0f, 0f, 0f);
+        bool haveCaret = false;
+        int caretIndex = -1;
+
+        for (int i = 0; i < _stripRoots.Count; i++)
+        {
+            bool on = i < _stripBuffer.Count;
+            DsWidgets.SetActive(_stripRoots[i], on);
+            if (!on) continue;
+
+            var item = _stripBuffer[i];
+            float x = i * cell + (cell - size) * 0.5f;
+            float y = (_layout.Tabs.height - size) * 0.5f;
+            DsWidgets.Place(_stripRoots[i], x, y, size, size);
+
+            var icon = _stripIcons[i];
+            if (icon != null)
+            {
+                if (item.Icon != null) DsWidgets.FitCentred(icon, item.Icon, size, size);
+                // Selection is shown on the ICON as well as by the caret. The
+                // caret is the design's signal, but it is drawn from the game's
+                // art and sits outside the icon; dimming what is not chosen
+                // means the strip still reads correctly if that art is missing
+                // or lands badly, which it did while this was being built.
+                icon.color = item.Icon == null ? Color.clear
+                           : item.Dim ? new Color(1f, 1f, 1f, 0.25f)
+                           : item.Selected ? Color.white
+                           : new Color(1f, 1f, 1f, 0.45f);
+            }
+            var badge = _stripBadges[i];
+            if (badge != null)
+            {
+                bool show = !string.IsNullOrEmpty(item.Badge);
+                DsWidgets.SetActive(badge, show);
+                if (show) badge.text = item.Badge;
+            }
+
+            if (!item.Selected) continue;
+            haveCaret = true;
+            caretIndex = i;
+            // The ART's box, not the cell's. FitCentred sizes the icon to its
+            // sprite's aspect and shifts it so the trimmed mesh is centred, so
+            // the rect it leaves IS what the player sees -- framing the cell
+            // instead put the brackets out in the gap beside a small pin. Same
+            // reasoning as the tab caret and DsIconGrid.IconRect.
+            caret = new Rect(x, y, size, size);
+            if (icon != null && item.Icon != null)
+            {
+                var rt = icon.rectTransform;
+                caret = new Rect(
+                    x + (size - rt.sizeDelta.x) * 0.5f + rt.anchoredPosition.x,
+                    y + (size - rt.sizeDelta.y) * 0.5f - rt.anchoredPosition.y,
+                    rt.sizeDelta.x, rt.sizeDelta.y);
+            }
+        }
+
+        if (haveCaret) PlaceStripCaret(caret);
+        else HideStripCaret();
+    }
+
+    Image _stripCaretTL, _stripCaretBR;
+
+    /// <summary>
+    /// The brackets around the chosen strip button.
+    ///
+    /// Drawn here rather than through DsCursor. The shared cursor reported
+    /// sensible geometry and live art in this parent and still put nothing on
+    /// screen, and the strip is the one place it has no travelling to do -- the
+    /// buttons are fixed cells, so there is nothing to animate between. Two
+    /// images owned outright are easier to be sure of than a shared widget that
+    /// is behaving differently here than everywhere else.
+    /// </summary>
+    void PlaceStripCaret(Rect box)
+    {
+        var art = DsGameArt.SelectionCursor();
+        if (!art.Ok) { HideStripCaret(); return; }
+
+        if (_stripCaretTL == null)
+        {
+            _stripCaretTL = DsWidgets.Icon(_tabBar, "strip-caret-tl", art.Corner, Color.white);
+            _stripCaretBR = DsWidgets.Icon(_tabBar, "strip-caret-br", art.Corner, Color.white);
+            _stripCaretBR.rectTransform.localRotation = Quaternion.Euler(0f, 0f, 180f);
+            _stripCaretNow = box;      // the first one has nowhere to come from
+        }
+        _stripCaretTL.sprite = art.Corner;
+        _stripCaretBR.sprite = art.Corner;
+
+        // A new target starts a journey; the same one just keeps it going. The
+        // strip's buttons are fixed cells, so this is only ever a slide from one
+        // to another -- but it should slide, like every other caret here.
+        if (_stripCaretTo != box)
+        {
+            _stripCaretFrom = _stripCaretNow;
+            _stripCaretTo = box;
+            _stripCaretT = 0f;
+        }
+
+        DsWidgets.SetActive(_stripCaretTL, true);
+        DsWidgets.SetActive(_stripCaretBR, true);
+    }
+
+    /// <summary>Carry the strip's caret toward whatever is selected.</summary>
+    void TickStripCaret(float dt)
+    {
+        if (_stripCaretTL == null || !_stripShown) return;
+
+        if (_stripCaretT < 1f)
+        {
+            float time = Mathf.Max(0.001f, DsCursor.MoveSeconds);
+            _stripCaretT = Mathf.Min(1f, _stripCaretT + dt / time);
+            _stripCaretNow = new Rect(
+                Mathf.Lerp(_stripCaretFrom.x, _stripCaretTo.x, _stripCaretT),
+                Mathf.Lerp(_stripCaretFrom.y, _stripCaretTo.y, _stripCaretT),
+                Mathf.Lerp(_stripCaretFrom.width, _stripCaretTo.width, _stripCaretT),
+                Mathf.Lerp(_stripCaretFrom.height, _stripCaretTo.height, _stripCaretT));
+        }
+        else _stripCaretNow = _stripCaretTo;
+
+        const float corner = 52f, inset = 10f;
+        Place(_stripCaretTL, _stripCaretNow.x + inset, _stripCaretNow.y + inset, corner);
+        Place(_stripCaretBR, _stripCaretNow.xMax - inset, _stripCaretNow.yMax - inset, corner);
+
+        // Above the buttons, which are added to the same parent.
+        _stripCaretTL.rectTransform.SetAsLastSibling();
+        _stripCaretBR.rectTransform.SetAsLastSibling();
+    }
+
+    Rect _stripCaretNow, _stripCaretFrom, _stripCaretTo;
+    float _stripCaretT = 1f;
+
+    // Centred on the point, like every other caret on the panel: these are
+    // drawn with useSpriteMesh, whose mesh is laid out from the sprite's pivot,
+    // so a top-left anchor displaces the ink. See DsCursor.PlaceCorner.
+    static void Place(Image img, float cx, float cy, float size)
+    {
+        var rt = img.rectTransform;
+        rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = new Vector2(size, size);
+        rt.anchoredPosition = new Vector2(cx, -cy);
+        img.color = Color.white;
+    }
+
+    void HideStripCaret()
+    {
+        DsWidgets.SetActive(_stripCaretTL, false);
+        DsWidgets.SetActive(_stripCaretBR, false);
+    }
+
+    void BuildStrip(int needed)
+    {
+        if (!_stripBuilt)
+        {
+            _stripBuilt = true;
+        }
+        while (_stripRoots.Count < needed)
+        {
+            var root = DsWidgets.Rect(_tabBar, "strip" + _stripRoots.Count);
+            var icon = DsWidgets.Icon(root, "icon", null, Color.white);
+            DsWidgets.Stretch(icon.rectTransform);
+            var badge = DsWidgets.Label(root, "badge", "", DsTheme.RowSize,
+                                        Color.white, TmpAlign.TopRight);
+            if (badge != null) DsWidgets.Stretch(badge.rectTransform, -6f);
+            _stripRoots.Add(root);
+            _stripIcons.Add(icon);
+            _stripBadges.Add(badge);
+        }
     }
 
     // Sized against the designs, where the title is the largest thing on the
@@ -590,6 +813,22 @@ public class DsShell
         var target = _gestures.Route(g, _layout, _entries.Count, out tab);
         if (target == DsGestureTarget.Tab)
         {
+            // While a screen owns the strip, a tap there is its own, not a tab
+            // change -- which is also what stops the player leaving marker mode
+            // by reaching for a pin and hitting a tab.
+            if (_stripShown && _active >= 0 && _active < _entries.Count)
+            {
+                var owner = _entries[_active].Screen as IDsTabStrip;
+                if (owner != null)
+                {
+                    int n = Mathf.Max(1, _stripBuffer.Count);
+                    int index = Mathf.Clamp(
+                        (int)(_layout.ToLayout(g.Position).x / (_w / n)), 0, n - 1);
+                    var e2 = _entries[_active];
+                    Guard(e2, () => owner.OnStripSelect(index));
+                }
+                return;
+            }
             Show(tab);
             return;
         }
