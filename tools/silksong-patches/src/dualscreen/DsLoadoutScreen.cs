@@ -31,7 +31,7 @@ using UnityEngine.UI;
 using TmpText = TMProOld.TextMeshProUGUI;
 using TmpAlign = TMProOld.TextAlignmentOptions;
 
-public class DsLoadoutScreen : IDsScreen
+public class DsLoadoutScreen : IDsScreen, IDsActionBar
 {
     // Layout, in panel pixels with the origin at the top-left of the panel.
     //
@@ -73,6 +73,9 @@ public class DsLoadoutScreen : IDsScreen
     string _crestId;
     int _toolSignature;
     float _nextRefresh;
+    // The tool in the socket the player last tapped, which the grid cannot hold
+    // for us: handing the cursor to a socket clears the grid's own selection.
+    ToolItem _socketTool;
 
     /// <summary>The shared grid, so the tool list and its detail pane are one thing.</summary>
     DsIconGrid Grid => _grid;
@@ -309,27 +312,41 @@ public class DsLoadoutScreen : IDsScreen
                 // has y up where our layout has y down.
                 float x = cx + info.Position.x * scale - SlotIcon * 0.5f;
                 float y = cy - info.Position.y * scale - SlotIcon * 0.5f;
-                AddSlot(x, y, SlotIcon, DsTheme.ToolTypeColor(info.Type), tool);
+
+                // A slot the player has not opened yet. The game asks the same
+                // pair of questions: the crest says the slot CAN be locked, and
+                // the save says whether it has been unlocked.
+                bool locked = false;
+                try
+                {
+                    if (info.IsLocked)
+                        locked = saved == null || i >= saved.Count || !saved[i].IsUnlocked;
+                }
+                catch { }
+
+                AddSlot(x, y, SlotIcon, DsTheme.ToolTypeColor(info.Type),
+                        locked ? null : tool, info.Type, locked);
             }
         }
 
-        AddExtraSlots(12f, 82f);
+        AddExtraSlots();
     }
 
-    // Tools equipped OUTSIDE the crest's own ring. The game draws these to one
-    // side of the crest, and they were simply missing here -- they live in
-    // PlayerData.ExtraToolEquips, a separate slot list from the crest's, which
-    // is easy to miss because ToolCrest.Slots looks like the whole story.
-    //
-    // Tucked into the top-left corner: near enough to read as part of the
-    // loadout, far enough from the centre not to collide with the artwork.
-    void AddExtraSlots(float x, float top)
+    /// <summary>
+    /// The tools equipped OUTSIDE the crest's own ring, in a row under it.
+    ///
+    /// They used to tuck into the top-left corner, which put them where the eye
+    /// starts and made them read as part of the crest's own ring. The game keeps
+    /// them apart from it -- a separate framed pair beside the crest -- and
+    /// below is where this panel has the room.
+    /// </summary>
+    void AddExtraSlots()
     {
         List<string> names = null;
         try { names = PlayerData.instance.ExtraToolEquips.GetValidNames(); } catch { }
         if (names == null || names.Count == 0) return;
 
-        float y = top;
+        var tools = new List<ToolItem>();
         for (int i = 0; i < names.Count; i++)
         {
             ToolCrestsData.SlotData data;
@@ -338,15 +355,42 @@ public class DsLoadoutScreen : IDsScreen
 
             ToolItem tool = null;
             try { tool = ToolItemManager.GetToolByName(data.EquippedTool); } catch { }
-            if (tool == null) continue;
+            if (tool != null) tools.Add(tool);
+        }
+        if (tools.Count == 0) return;
 
-            AddSlot(x, y, ExtraIcon, DsTheme.ToolTypeColor(tool.Type), tool);
-            y += ExtraIcon + 14f;
-            if (y > _crestH - ExtraIcon) break;
+        // Centred as a row beneath the crest, clear of its lowest slot.
+        const float gap = 18f;
+        float width = tools.Count * ExtraIcon + (tools.Count - 1) * gap;
+        float x = (LeftW - width) * 0.5f;
+        float y = _crestH - ExtraIcon - 8f;
+
+        for (int i = 0; i < tools.Count; i++)
+        {
+            AddSlot(x, y, ExtraIcon, DsTheme.ToolTypeColor(tools[i].Type), tools[i],
+                    tools[i].Type, false);
+            x += ExtraIcon + gap;
         }
     }
-
+    // Tucked into the top-left corner: near enough to read as part of the
+    // loadout, far enough from the centre not to collide with the artwork.
     void AddSlot(float x, float y, float size, Color ringColour, ToolItem tool)
+    {
+        AddSlot(x, y, size, ringColour, tool, ToolItemType.Red, false);
+    }
+
+    /// <summary>
+    /// One slot around the crest.
+    ///
+    /// An empty slot is not an empty circle: the game draws the symbol for what
+    /// the slot TAKES, tinted in that type's colour (InventoryToolCrestSlot
+    /// returns its slotTypeSprite whenever nothing is equipped). A slot that has
+    /// not been unlocked yet is the same symbol in grey at four-fifths scale,
+    /// which is again the game's own treatment rather than an invention -- see
+    /// its SpriteTint and LOCKED_SLOT_SCALE.
+    /// </summary>
+    void AddSlot(float x, float y, float size, Color ringColour, ToolItem tool,
+                 ToolItemType type, bool locked)
     {
         var holder = DsWidgets.Rect(_crestBox, "slot" + _slotRects.Count);
         DsWidgets.Place(holder, x, y, size, size);
@@ -354,21 +398,37 @@ public class DsLoadoutScreen : IDsScreen
         // Round, because the game's slots are round and a square frame around a
         // round icon reads as a different kind of thing. The ring's colour says
         // what may go in the slot, which is useful even when it is empty.
-        var ring = DsWidgets.Circle(holder, "ring", ringColour);
+        var ring = DsWidgets.Circle(holder, "ring", locked ? LockedGrey : ringColour);
         DsWidgets.Stretch(ring.rectTransform);
         var inner = DsWidgets.Circle(ring.rectTransform, "inner", DsTheme.Panel);
         DsWidgets.Stretch(inner.rectTransform, 5f);
 
         Sprite icon = null;
         try { icon = tool != null ? tool.InventorySpriteBase : null; } catch { }
-        var img = DsWidgets.Icon(inner.rectTransform, "icon", icon, Color.white);
+
+        float inset = size * 0.17f;
+        Color tint = Color.white;
+        if (icon == null)
+        {
+            icon = DsGameArt.CrestSlotSymbol(type);
+            tint = locked ? LockedGrey : ringColour;
+            // Locked slots are drawn smaller, so the inset grows rather than the
+            // rect shrinking -- the ring around it must stay the slot's size.
+            if (locked) inset += size * 0.10f;
+            else inset += size * 0.04f;
+        }
+
+        var img = DsWidgets.Icon(inner.rectTransform, "icon", icon, tint);
         // Inset enough that a square-ish icon stays inside the circle.
-        DsWidgets.Stretch(img.rectTransform, size * 0.17f);
+        DsWidgets.Stretch(img.rectTransform, inset);
 
         _slots.Add(img);
-        _slotTools.Add(tool);
+        // A locked slot holds nothing and must not answer taps with a tool.
+        _slotTools.Add(locked ? null : tool);
         _slotRects.Add(holder);
     }
+
+    static readonly Color LockedGrey = new Color(0.5f, 0.5f, 0.5f, 1f);
 
     void ClearSlots()
     {
@@ -493,6 +553,10 @@ public class DsLoadoutScreen : IDsScreen
                 // Select it in the list, so the description pane fills and the
                 // grid knows what is chosen...
                 _grid.SelectByKey(tool.name);
+                // ...and remember it here, because handing the cursor to the
+                // socket below clears the grid's key, and the header's
+                // EQUIP/UNEQUIP needs to know what is under the cursor.
+                _socketTool = tool;
 
                 // ...but keep the cursor HERE, on the socket that was actually
                 // tapped, rather than letting it jump across to the same tool's
@@ -508,6 +572,136 @@ public class DsLoadoutScreen : IDsScreen
     static string DsText(TeamCherry.Localization.LocalisedString s)
     {
         try { return s.ToString(); } catch { return ""; }
+    }
+    // ── EQUIP / UNEQUIP ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Offer the tool under the cursor, but only at a bench.
+    ///
+    /// That is the game's own rule -- InventoryItemToolManager.CanChangeEquips
+    /// is `playerData.atBench` with a cheat override -- and the v3 notes ask for
+    /// the button to be absent rather than greyed when it does not apply. This
+    /// differs from USE on the Inventory tab deliberately: a consumable you
+    /// cannot drink yet is still a consumable, and saying so is useful, while a
+    /// tool away from a bench is simply not something the panel can act on.
+    /// </summary>
+    public void CollectActions(List<DsAction> into)
+    {
+        var tool = SelectedTool();
+        if (tool == null || !AtBench()) return;
+
+        bool equipped = false;
+        try { equipped = ToolItemManager.IsToolEquipped(tool.name); } catch { }
+
+        into.Add(equipped
+            ? new DsAction("UNEQUIP", () => Unequip(tool))
+            : new DsAction("EQUIP", () => Equip(tool)));
+    }
+
+    /// <summary>
+    /// At a bench, which is the game's own condition for changing equips
+    /// (InventoryItemToolManager.CanChangeEquips reads playerData.atBench).
+    ///
+    /// Deliberately only that. The game also lets a cheat flag override it, and
+    /// honouring that here would make the panel disagree with the bench rule
+    /// the rest of the game is played by.
+    /// </summary>
+    static bool AtBench()
+    {
+        if (!DsGameData.InGame) return false;
+        try { return PlayerData.instance.atBench; } catch { return false; }
+    }
+
+    ToolItem SelectedTool()
+    {
+        if (!DsGameData.InGame) return null;
+
+        // The grid's own selection wins when it has one. Tapping a socket hands
+        // the cursor to the socket, which clears the grid's key -- so without
+        // remembering the socket here, selecting an equipped tool in the crest
+        // offered nothing at all and the player had to hunt the same tool down
+        // in the list to unequip it.
+        string key = _grid.SelectedKey;
+        if (!string.IsNullOrEmpty(key))
+        {
+            _socketTool = null;
+            try { return ToolItemManager.GetToolByName(key); } catch { return null; }
+        }
+        return _socketTool;
+    }
+
+    void Unequip(ToolItem tool)
+    {
+        try
+        {
+            ToolItemManager.UnequipTool(tool);
+            Refresh(force: true);
+        }
+        catch (Exception e) { Debug.LogWarning("[DualScreen] unequip failed: " + e.Message); }
+    }
+
+    /// <summary>
+    /// Put the tool in a slot of its own type, preferring an empty one.
+    ///
+    /// This is ToolItemManager.AutoEquip's slot arithmetic, done here rather
+    /// than by calling it, because AutoEquip also does two things that belong to
+    /// the game's own inventory and not to us: it sets UnlockedTool, which is
+    /// the "newly unlocked" presentation state, and it calls
+    /// InventoryPaneList.SetNextOpen("Tools"), which decides which pane the
+    /// player's NEXT press of the inventory button lands on. Equipping from the
+    /// second screen should not reach into either.
+    ///
+    /// What is left -- SetEquippedTools and the changed event -- is the part
+    /// that actually equips, and both are public and free of that baggage.
+    /// </summary>
+    void Equip(ToolItem tool)
+    {
+        try
+        {
+            string crestId = PlayerData.instance.CurrentCrestID;
+            var crest = ToolItemManager.GetCrestByName(crestId);
+            if (crest == null || crest.Slots == null) return;
+
+            var equipped = ToolItemManager.GetEquippedToolsForCrest(crestId);
+            var slots = new List<string>(crest.Slots.Length);
+            for (int i = 0; i < crest.Slots.Length; i++)
+            {
+                var held = (equipped != null && i < equipped.Count) ? equipped[i] : null;
+                slots.Add(held != null ? held.name : string.Empty);
+            }
+
+            int target = -1;
+            if (tool.Type == ToolItemType.Skill)
+            {
+                // Skills go in the one neutral skill slot, not in any of them.
+                for (int i = 0; i < crest.Slots.Length; i++)
+                {
+                    if (crest.Slots[i].Type == ToolItemType.Skill &&
+                        crest.Slots[i].AttackBinding == AttackToolBinding.Neutral)
+                    { target = i; break; }
+                }
+            }
+            else
+            {
+                // An empty slot of the right colour if there is one; otherwise
+                // the last of that colour, which is then replaced.
+                int lastOfType = -1, firstFree = -1;
+                for (int i = 0; i < crest.Slots.Length; i++)
+                {
+                    if (crest.Slots[i].Type != tool.Type) continue;
+                    lastOfType = i;
+                    if (string.IsNullOrEmpty(slots[i])) firstFree = i;
+                }
+                target = firstFree >= 0 ? firstFree : lastOfType;
+            }
+            if (target < 0) return;      // this crest has nowhere to put it
+
+            slots[target] = tool.name;
+            ToolItemManager.SetEquippedTools(crestId, slots);
+            ToolItemManager.SendEquippedChangedEvent();
+            Refresh(force: true);
+        }
+        catch (Exception e) { Debug.LogWarning("[DualScreen] equip failed: " + e.Message); }
     }
 }
 #endif

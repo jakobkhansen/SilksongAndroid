@@ -241,6 +241,54 @@ public static class DsGameArt
         return _cursor;
     }
 
+    // ── crest slot symbols ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// The symbol the game draws in an EMPTY crest slot, one per tool type.
+    ///
+    /// InventoryToolCrestSlot.Sprite returns its serialized slotTypeSprite
+    /// whenever nothing is equipped, tinted with the slot's own type colour, so
+    /// each type has its own shape. A locked slot is the SAME sprite in grey at
+    /// four-fifths scale -- see SpriteTint there -- rather than a shape of its
+    /// own, which is why there is nothing separate to look up for it.
+    /// </summary>
+    static readonly Dictionary<int, Sprite> _slotSymbols = new Dictionary<int, Sprite>();
+    static bool _slotSymbolsSearched;
+
+    public static Sprite CrestSlotSymbol(ToolItemType type)
+    {
+        Sprite found;
+        if (_slotSymbols.TryGetValue((int)type, out found) && found != null) return found;
+        if (_slotSymbolsSearched && _slotSymbols.Count > 0) return null;
+
+        try
+        {
+            var field = typeof(InventoryToolCrestSlot).GetField("slotTypeSprite", Priv);
+            if (field == null) { _slotSymbolsSearched = true; return null; }
+
+            var slots = Resources.FindObjectsOfTypeAll<InventoryToolCrestSlot>();
+            for (int i = 0; i < slots.Length; i++)
+            {
+                var slot = slots[i];
+                if (slot == null) continue;
+                var sprite = field.GetValue(slot) as Sprite;
+                if (sprite == null) continue;
+                int key = (int)slot.Type;
+                if (!_slotSymbols.ContainsKey(key) || _slotSymbols[key] == null)
+                    _slotSymbols[key] = sprite;
+            }
+            if (_slotSymbols.Count > 0) _slotSymbolsSearched = true;
+        }
+        catch (System.Exception e)
+        {
+            _slotSymbolsSearched = true;
+            Debug.LogWarning("[DualScreen] crest slot symbols unavailable: " + e.Message);
+        }
+
+        _slotSymbols.TryGetValue((int)type, out found);
+        return found;
+    }
+
     static Sprite FieldSprite(Component owner, string field)
     {
         try
