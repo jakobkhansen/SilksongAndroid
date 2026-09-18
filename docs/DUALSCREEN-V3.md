@@ -146,6 +146,88 @@ tab-strip rule, the column gutters and the Tasks dividers all take the art witho
 screens changing. Each accessor may return null and the widgets fall back to the plain box
 rule.
 
+One divider is **not** ours, and could not be: the ornament either side of Tasks'
+COMPLETED caption. See the Tasks section below.
+
+### Tasks
+
+Tasks now has the shape the screenshots do, which is the shape the game's own quest pane
+has — and which the previous two versions both missed:
+
+|              | v1                     | v2                        | now                        |
+| ------------ | ---------------------- | ------------------------- | -------------------------- |
+| layout       | four-column icon grid  | one column, full width    | **two across**             |
+| what a cell says | icon only          | name + progress counter   | icon + **type** + name     |
+| finished quests | mixed in            | under a caption           | under a caption, **hideable** |
+
+The first was wrong because quests are read by NAME rather than recognised by picture. The
+second was right about that and wrong about everything else, because a quest is not
+identified by its name alone. The game sets the quest's **type** in small caps above it —
+"Last Dive" is a place, `DESCEND / Last Dive` is an instruction — and that line is half the
+sentence. It comes from `QuestType.DisplayName` and is tinted `QuestType.TextColor`, set in
+caps by the label's own style rather than by rewriting the string, because the type name is
+localised and upper-casing text in code is a per-language decision we are in no position to
+make.
+
+Every rule of the grouping is the game's, and each is taken from a named method so it can
+be checked rather than believed:
+
+| What | Where it comes from |
+| --- | --- |
+| two across | `InventoryItemGrid`'s `RowSplit` on the Quests section |
+| a quest is prioritised | `InventoryItemQuestManager.IsInMainQuestSection` — a `MainQuest` that is not complete |
+| the type line and its colour | `InventoryItemQuest.SetQuest`, `QuestType.DisplayName`/`TextColor` |
+| two groups, current and completed | `GetGridSections` |
+| the toggle exists at all | `isCompletedQuestsVisible`, offered only while `completedQuests.Count > 0` |
+
+The prioritised quest takes a **full-width row with a larger icon**, centred in it, which
+is the game's own `itemListLayout` alignment and what the designs show. It is not one of
+several things to choose between; it is the thing being done.
+
+Two places where we knowingly differ, both because this panel is a touch screen:
+
+- The game binds the toggle to `MenuActions.Super` and draws a **Y** glyph beside it.
+  Nothing here is reachable by controller, so it takes the header action bar every other
+  screen's controls live in, reading `HIDE COMPLETED` / `SHOW COMPLETED`. It is absent
+  entirely when nothing is finished — a button that hides an empty group is a control the
+  player has to press in order to learn it does nothing.
+- The game's divider between the prioritised quest and the rest is an invisible `Spacer`.
+  Set two across, the priorities stop in the middle of a row and the break is genuinely
+  hard to see, so ours is drawn. It appears only when a prioritised quest actually exists.
+
+What the cell gave up to gain the type line is the per-quest counter. Three things carry
+the "how far along" signal without it: the game's own `CanCompleteIcon` replaces the icon
+when a quest is ready to hand in, the name goes bold with it, and the description pane
+still breaks every target down individually. A number beside a name in a 384-pixel cell
+would have cost the name the room the design gives it — and a name is the one thing here
+that has to arrive whole, so a long one shrinks to fit rather than wrapping or truncating.
+
+#### The COMPLETED ornament is read from the running game
+
+The caption is flanked by a small filigree stroke, mirrored left and right, with a hairline
+running outward from each. That art is the game's, and it is the one divider on the panel
+that **cannot** be embedded the way `DsRuleArt`'s three are.
+
+The reason is worth recording, because the obvious approach fails silently. In a decompile
+of the game the sprite reference on those objects is the placeholder GUID
+`0000000deadbeef15deadf00d0000000` — no `.meta` anywhere declares it, and the same id
+stands in for the quest icons and the button glyphs too. Anything that resolves it "finds"
+whichever unrelated PNG it happened to match. There is no file on disk to lift.
+
+The object graph survives the decompile even though the art does not, and that is enough:
+`InventoryItemQuestManager.completedHeading` is a `Transform` holding a `Title Text` with
+`Fluer Left` and `Fluer Right` under it. `DsGameArt.QuestDivider()` walks exactly that path
+on the live scene object and takes the sprite off the first `SpriteRenderer` it finds,
+inactive children included — the heading is switched off whenever the player has nothing
+finished, which is precisely when a new save is most likely to be looking at this screen.
+Left and right are the same art mirrored, so one sprite is all there is to find.
+
+Null is the normal early answer, not an error: the pane is built when the game's own
+inventory first opens, and before that there is nothing to read. The divider falls back to
+a plain rule, and whether the ornament has arrived is part of the list's rebuild signature,
+so the moment the game hands it over the divider is rebuilt with it — without which the
+fallback would persist until something unrelated happened to change the list.
+
 ### Three columns
 
 Inventory, Crest and Journal now share one shape, which is the shape the screenshots

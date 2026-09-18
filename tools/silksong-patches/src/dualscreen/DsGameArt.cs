@@ -85,7 +85,12 @@ public static class DsGameArt
     }
 
     /// <summary>Drop cached references — the scene changed, or the save did.</summary>
-    public static void Forget() { _inventory = null; _cursor = null; _nextInventorySearch = 0f; }
+    public static void Forget()
+    {
+        _inventory = null; _cursor = null; _nextInventorySearch = 0f;
+        _nextFluerSearch = 0f;
+        _questCounter = null; _nextCounterSearch = 0f;
+    }
 
     public static Sprite TabIcon(InventoryPaneList.PaneTypes type)
     {
@@ -287,6 +292,202 @@ public static class DsGameArt
 
         _slotSymbols.TryGetValue((int)type, out found);
         return found;
+    }
+
+    // ── the quest list's divider ────────────────────────────────────────────
+
+    static Sprite _questFluer;
+    static float _nextFluerSearch;
+
+    /// <summary>
+    /// The ornament the game sets either side of COMPLETED in its own quest
+    /// list, taken off the live pane.
+    ///
+    /// It has to be read from the scene rather than shipped with us, and the
+    /// reason is worth recording: in a decompile of the game this sprite
+    /// reference is the placeholder GUID `0000000deadbeef15deadf00d0000000` --
+    /// the same unresolvable id that stands in for the quest icons and the
+    /// button glyphs -- so there is no PNG on disk to lift. The object graph
+    /// still tells us exactly where the art lives, which is enough:
+    /// InventoryItemQuestManager.completedHeading is a Transform holding a
+    /// `Title Text` with `Fluer Left` and `Fluer Right` under it, and those
+    /// two SpriteRenderers are the ornament. Left and right are the same art
+    /// mirrored, so one sprite is all there is to find.
+    ///
+    /// Null is normal and not an error: the pane is built when the game's own
+    /// inventory first opens, and before that there is nothing to read. The
+    /// caller falls back to a plain rule.
+    /// </summary>
+    public static Sprite QuestDivider()
+    {
+        if (_questFluer != null) return _questFluer;
+        // FindObjectsOfTypeAll walks every loaded object, so it is rate-limited
+        // the way the inventory lookup is rather than run per rebuild.
+        if (Time.unscaledTime < _nextFluerSearch) return null;
+        _nextFluerSearch = Time.unscaledTime + 2f;
+
+        try
+        {
+            var field = typeof(InventoryItemQuestManager).GetField("completedHeading", Priv);
+            if (field == null) return null;
+
+            var managers = Resources.FindObjectsOfTypeAll<InventoryItemQuestManager>();
+            for (int i = 0; i < managers.Length && _questFluer == null; i++)
+            {
+                if (managers[i] == null) continue;
+                var heading = field.GetValue(managers[i]) as Transform;
+                if (heading == null) continue;
+
+                // Include inactive: the heading is switched off whenever the
+                // player has no completed quests, which is exactly when a new
+                // save is most likely to be looking at this screen.
+                var renderers = heading.GetComponentsInChildren<SpriteRenderer>(true);
+                for (int r = 0; r < renderers.Length; r++)
+                {
+                    if (renderers[r] == null || renderers[r].sprite == null) continue;
+                    _questFluer = renderers[r].sprite;
+                    break;
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DualScreen] quest divider art unavailable: " + e.Message);
+        }
+        return _questFluer;
+    }
+
+    // ── the quest list's progress counters ──────────────────────────────────
+
+    /// <summary>
+    /// The art and the two state colours the game draws a quest's progress
+    /// with. Any field may be null; callers fall back to plain shapes.
+    /// </summary>
+    public class QuestCounter
+    {
+        /// <summary>The dot, in its done and not-yet-done states.</summary>
+        public Sprite DotFilled, DotEmpty;
+        /// <summary>
+        /// Each state's own colour, which the game MULTIPLIES by the quest's
+        /// ProgressBarTint rather than replacing -- see IconCounterItem.TintColor,
+        /// `spriteRenderer.color = baseColor.MultiplyElements(tintColor)`. So an
+        /// empty dot is dark because its state colour is dark, not because the
+        /// quest asked for a dark tint.
+        /// </summary>
+        public Color FilledColour = Color.white, EmptyColour = Color.white;
+        /// <summary>The filled part of a progress bar.</summary>
+        public Sprite Bar;
+
+        public bool Ok { get { return DotFilled != null || DotEmpty != null || Bar != null; } }
+        /// <summary>Nothing left to look for.</summary>
+        public bool Complete
+        {
+            get { return DotFilled != null && DotEmpty != null && Bar != null; }
+        }
+    }
+
+    static QuestCounter _questCounter;
+    static float _nextCounterSearch;
+
+    /// <summary>
+    /// The dot and bar art the game's own quest list draws progress with.
+    ///
+    /// Same problem as the divider, and the same answer: these sprites are
+    /// unresolvable in a decompile, but the object graph that reaches them is
+    /// not. InventoryItemQuest holds an `iconCounter` and a `progressBar`, and
+    /// the dot's two states live on the IconCounter's `templateItem` -- the
+    /// prefab it clones one of per dot.
+    ///
+    /// The search keeps going until all three pieces are found rather than
+    /// stopping at the first quest item, because a given template need not have
+    /// every one of them assigned: the main-quest template and the ordinary one
+    /// are different prefabs and only one may carry a bar.
+    /// </summary>
+    public static QuestCounter QuestCounterArt()
+    {
+        if (_questCounter != null && _questCounter.Complete) return _questCounter;
+        if (Time.unscaledTime < _nextCounterSearch) return _questCounter;
+        _nextCounterSearch = Time.unscaledTime + 2f;
+
+        var found = _questCounter ?? new QuestCounter();
+        try
+        {
+            var items = Resources.FindObjectsOfTypeAll<InventoryItemQuest>();
+            for (int i = 0; i < items.Length && !found.Complete; i++)
+            {
+                var item = items[i];
+                if (item == null) continue;
+
+                var counter = PrivateField(item, typeof(InventoryItemQuest), "iconCounter") as IconCounter;
+                if (counter != null)
+                {
+                    var template = PrivateField(counter, typeof(IconCounter), "templateItem") as IconCounterItem;
+                    if (template != null)
+                    {
+                        ReadDotState(template, "activeState", ref found.DotFilled, ref found.FilledColour);
+                        ReadDotState(template, "inactiveState", ref found.DotEmpty, ref found.EmptyColour);
+                    }
+                }
+
+                if (found.Bar == null)
+                {
+                    var slider = PrivateField(item, typeof(InventoryItemQuest), "progressBar") as ImageSlider;
+                    if (slider != null)
+                    {
+                        var img = PrivateField(slider, typeof(ImageSlider), "image") as UnityEngine.UI.Image;
+                        if (img != null && img.sprite != null) found.Bar = img.sprite;
+                    }
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DualScreen] quest counter art unavailable: " + e.Message);
+        }
+
+        _questCounter = found;
+        return found;
+    }
+
+    /// <summary>
+    /// One of IconCounterItem's two DisplayStates.
+    ///
+    /// DisplayState is a PRIVATE nested struct, so it cannot be named here and
+    /// is read field by field off the boxed value. Its own fields are public
+    /// within it, which is why this asks for public members of a private type.
+    /// </summary>
+    static void ReadDotState(IconCounterItem item, string field, ref Sprite sprite, ref Color colour)
+    {
+        try
+        {
+            var f = typeof(IconCounterItem).GetField(field, Priv);
+            if (f == null) return;
+            object state = f.GetValue(item);
+            if (state == null) return;
+
+            var type = state.GetType();
+            var spriteField = type.GetField("Sprite");
+            var colourField = type.GetField("Color");
+
+            if (spriteField != null)
+            {
+                var s = spriteField.GetValue(state) as Sprite;
+                if (s != null) sprite = s;
+            }
+            if (colourField != null && colourField.FieldType == typeof(Color))
+                colour = (Color)colourField.GetValue(state);
+        }
+        catch { }
+    }
+
+    static object PrivateField(object owner, System.Type type, string name)
+    {
+        try
+        {
+            var f = type.GetField(name, Priv);
+            return f != null ? f.GetValue(owner) : null;
+        }
+        catch { return null; }
     }
 
     // ── map markers ─────────────────────────────────────────────────────────

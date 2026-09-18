@@ -152,10 +152,29 @@ $out = @()
 foreach ($f in @($log, "$log.err")) {
     if (Test-Path $f) { $out += Get-Content $f -ErrorAction SilentlyContinue }
 }
-$errors = $out | Select-String -Pattern 'error '
-if ($errors) {
-    $errors | Select-Object -First 30 | ForEach-Object { Write-Host $_ -ForegroundColor Red }
-    Write-Host "[check] FAILED ($($errors.Count) error(s))" -ForegroundColor Red
+
+# The compiler's own exit code decides, not a text search.
+#
+# This used to grep the log for 'error ', which PowerShell matches
+# case-INSENSITIVELY and as a bare substring. On any machine with an
+# authenticated NuGet feed configured, the restore prints lines like
+# "warning : Error Message: IncorrectConfiguration" from the credential
+# provider -- and a hundred of those turned a build that had reported
+# "Build succeeded. 0 Error(s)" into "[check] FAILED (114 error(s))".
+#
+# The diagnostics are still printed, matched on MSBuild's actual format
+# (`...: error CS1234: ...`), which needs an error CODE after the keyword and
+# so cannot be satisfied by prose containing the word.
+$diagnostics = $out | Select-String -Pattern ':\s+error\s+[A-Za-z]+[0-9]+' -CaseSensitive
+if ($proc.ExitCode -ne 0) {
+    if ($diagnostics) {
+        $diagnostics | Select-Object -First 30 | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+    } else {
+        # Failed without a recognisable diagnostic: show the tail, or the
+        # failure is invisible.
+        $out | Select-Object -Last 30 | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+    }
+    Write-Host "[check] FAILED (dotnet build exit $($proc.ExitCode), $($diagnostics.Count) diagnostic(s))" -ForegroundColor Red
     exit 1
 }
 Write-Host "[check] OK - $($sources.Count) sources compile against the depot" -ForegroundColor Green
