@@ -195,12 +195,16 @@ Two places where we knowingly differ, both because this panel is a touch screen:
   Set two across, the priorities stop in the middle of a row and the break is genuinely
   hard to see, so ours is drawn. It appears only when a prioritised quest actually exists.
 
-What the cell gave up to gain the type line is the per-quest counter. Three things carry
-the "how far along" signal without it: the game's own `CanCompleteIcon` replaces the icon
-when a quest is ready to hand in, the name goes bold with it, and the description pane
-still breaks every target down individually. A number beside a name in a 384-pixel cell
-would have cost the name the room the design gives it — and a name is the one thing here
-that has to arrive whole, so a long one shrinks to fit rather than wrapping or truncating.
+What the cell gave up to gain the type line is the per-quest counter. Two things carry
+the "how far along" signal without it: the dots or bar under the name, and the description
+pane, which still breaks every target down individually. A quest ready to hand in sets its
+name in bold — and note that `QuestType.CanCompleteIcon` must **not** be used as the
+symbol for that. It is the glow that goes over the icon, assigned to `QuestIconDisplay`'s
+`glows` array and given its own animator-driven renderer in `InventoryItemQuest`; swapped
+in as the icon it draws a bare glow and the cell blazes white. A number beside a name in a
+384-pixel cell would have cost the name the room the design gives it — and a name is the
+one thing here that has to arrive whole, so a long one shrinks to fit rather than wrapping
+or truncating.
 
 #### The COMPLETED ornament is read from the running game
 

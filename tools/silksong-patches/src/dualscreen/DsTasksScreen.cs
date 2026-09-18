@@ -49,12 +49,12 @@
 //     `Spacer`. Set two across, the priorities stop mid-row and the break is
 //     genuinely hard to see, so ours is drawn.
 //
-// What the cell gave up to gain the type line: the per-quest counter. Three
-// things carry the "how far along" signal without it -- the game's own
-// CanCompleteIcon replaces the icon when a quest is ready to hand in, the name
-// goes bold with it, and the description pane still breaks every target down
-// individually. A number beside a name in a 384-pixel cell would have cost the
-// name the room the design gives it.
+// What the cell gave up to gain the type line: the per-quest counter. Two
+// things carry the "how far along" signal without it -- the dots or bar under
+// the name, and the description pane, which still breaks every target down
+// individually. A quest that is ready to hand in sets its name in bold. A
+// number beside a name in a 384-pixel cell would have cost the name the room
+// the design gives it.
 
 #if UNITY_ANDROID && !UNITY_EDITOR
 using System;
@@ -96,6 +96,14 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         /// Null unless the quest asks for them.
         /// </summary>
         public List<QuestIcon> DescIcons;
+        /// <summary>Icon-and-count lines, for a quest whose counter is text.</summary>
+        public List<DescRow> DescRows;
+        /// <summary>A whole-quest bar, for a quest whose counter is one.</summary>
+        public bool DescBar;
+        public float DescValue;
+        public int DescHave, DescNeed;
+        /// <summary>The quest's own scale for those symbols.</summary>
+        public float IconScale;
         /// <summary>True when everything asked for is done but it is not handed in.</summary>
         public bool Ready;
     }
@@ -108,6 +116,20 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     {
         public Sprite Sprite;
         public bool Filled;
+    }
+
+    /// <summary>
+    /// One line of a TEXT counter: the thing wanted, and how far along.
+    ///
+    /// QuestItemDescriptionText draws exactly this and nothing else -- an icon
+    /// from GetCounterSpriteOverride(target, 0) and `string.Format(t, counter,
+    /// target.Count)`. Note what is NOT in it: the target's NAME. The symbol is
+    /// the name.
+    /// </summary>
+    struct DescRow
+    {
+        public Sprite Icon;
+        public int Have, Need;
     }
 
     /// <summary>One of a quest's targets: what to collect, how many, how many so far.</summary>
@@ -241,12 +263,19 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     // in a fixed amount of space.
     const int MaxDots = 24;
 
-    // The description pane's symbol row. One per unit collected, wrapped into
-    // rows at the pane's width, drawn at the bottom of the column the way the
-    // game puts its own in a bottom section.
-    const float DescIconSize = 46f;
-    const float DescIconGap  = 10f;
+    // The description pane's symbol row. One per unit collected, centred under
+    // the description it belongs to. Large enough to be recognised rather than
+    // merely counted -- the point of a symbol over a number is that you can see
+    // WHAT is wanted, and at the size these started they were neither.
+    const float DescIconSize = 64f;
+    const float DescIconGap  = 12f;
+    /// <summary>Space between the description's last line and the symbols.</summary>
+    const float DescIconTop  = 26f;
     const int   MaxDescIcons = 24;
+    /// <summary>The count beside a symbol, and under a description's bar.</summary>
+    const float DescCountSize = 34f;
+    const float DescBarW = 240f;
+    const float DescBarH = 14f;
     /// <summary>The tint an uncollected symbol is drawn in.</summary>
     static readonly Color DescIconEmpty = new Color(0.26f, 0.25f, 0.28f, 1f);
     // Long names shrink rather than truncate. "The Threadspun Town" does not fit
@@ -279,6 +308,8 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     const float DetailTypeSize = 26f;
     const float DetailTitleSize = 42f;
     const float DetailBodySize = 32f;
+    /// <summary>Where the description's prose starts, under the type and title.</summary>
+    const float DescTop = 150f;
     const float Pad = DsTheme.Pad;
     // Room for the selection brackets to reach outside the cell they frame,
     // without the scroll mask clipping them off.
@@ -381,7 +412,7 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         _desc = DsWidgets.Label(_detail, "desc", "", DetailBodySize,
                                 DsTheme.InkDim, TmpAlign.TopLeft);
         if (_desc != null)
-            DsWidgets.Place(_desc.rectTransform, 0f, 150f, detailW, _listH - 162f);
+            DsWidgets.Place(_desc.rectTransform, 0f, DescTop, detailW, _listH - 162f);
 
         _detailW = detailW;
         _iconBand = DsWidgets.Rect(_detail, "desc-icons");
@@ -554,6 +585,16 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
                 if (full != null && full.QuestType != null)
                 {
                     var questType = full.QuestType;
+                    // ALWAYS the plain icon. QuestType.CanCompleteIcon is not a
+                    // second icon, it is the GLOW that goes OVER this one: the
+                    // game assigns it to QuestIconDisplay's `glows` array, and
+                    // InventoryItemQuest gives it a SpriteRenderer of its own
+                    // that its animator switches on, leaving `icon` alone. Used
+                    // as a replacement it draws a bare glow where the symbol
+                    // should be, which is why a quest ready to hand in came out
+                    // blazing white. The bold name below says "ready" instead;
+                    // we have neither the additive material nor the animator
+                    // that would make the glow itself read correctly.
                     icon = questType.Icon;
                     type = questType.DisplayName;
 
@@ -564,11 +605,6 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
                     if (tint.a > 0.1f && (tint.r + tint.g + tint.b) > 0.1f) typeColour = tint;
 
                     canComplete = !completed && full.CanComplete;
-                    // A quest ready to hand in gets the game's own "you can
-                    // finish this" icon, which is the most useful thing the
-                    // list can tell you at a glance.
-                    if (canComplete && questType.CanCompleteIcon != null)
-                        icon = questType.CanCompleteIcon;
                 }
             }
             catch { }
@@ -771,23 +807,28 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     }
 
     /// <summary>
-    /// The symbols the description pane shows for what a quest collects,
-    /// following QuestItemDescription.SetDisplay's Icons branch.
+    /// What the description pane shows for a quest's progress, following
+    /// QuestItemDescription.SetDisplay.
     ///
-    /// One symbol per unit asked for -- three Flintgems is three symbols -- and
-    /// each is drawn whether or not it has been collected yet, which is the
-    /// point of them: the row shows the shape of the job before you have done
-    /// any of it, where "0/3" only tells you the size of it.
+    /// The quest picks the form, and all three are worth having because all
+    /// three say something the prose does not:
+    ///
+    ///   Icons        one symbol per unit asked for, each drawn whether or not
+    ///                it has been collected. Shows the SHAPE of the job before
+    ///                any of it is done.
+    ///   Text         a symbol and a count per target. Note the game puts NO
+    ///                NAME on these lines -- the symbol is the name, which is
+    ///                why "Silver Bells 0/8" was wrong twice over.
+    ///   ProgressBar  one bar across every target, with the total beside it.
     ///
     /// The rules, all of them the game's:
     ///
-    ///   * the count is the sum of every target's Count, and the sprite for the
-    ///     symbol at a flat index belongs to whichever target that index falls
-    ///     inside -- FindTargetIndex walks the targets accumulating their
+    ///   * the symbol for a flat index belongs to whichever target that index
+    ///     falls inside -- FindTargetIndex walks the targets accumulating their
     ///     counts, which is how one row spans several different things.
     ///   * GetCounterSpriteOverride picks the art: a quest-wide override first,
     ///     then the target's AltSprite, then the counter's own icon for that
-    ///     index -- so a quest collecting three different items can show three
+    ///     index -- so a quest collecting three different items shows three
     ///     different symbols.
     ///   * GetCollectedCountOverride, not the raw count, says how many are
     ///     done; a quest may answer that question its own way.
@@ -804,26 +845,71 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
             // DescCounterType, like ListCounterType, answers None by itself for
             // a completable quest that hides its counters, and also for
             // languages a quest opts out of.
-            if (full.DescCounterType != FullQuestBase.DescCounterTypes.Icons) return;
+            var kind = full.DescCounterType;
+            if (kind != FullQuestBase.DescCounterTypes.Icons &&
+                kind != FullQuestBase.DescCounterTypes.Text &&
+                kind != FullQuestBase.DescCounterTypes.ProgressBar) return;
 
             var targets = new List<FullQuestBase.QuestTarget>();
             var counts = new List<int>();
             foreach (var pair in full.TargetsAndCounters)
             {
                 targets.Add(pair.target);
-                counts.Add(pair.count);
+                counts.Add(full.GetCollectedCountOverride(pair.target, pair.count));
             }
             if (targets.Count == 0) return;
+
+            entry.IconScale = full.CounterIconScale;
 
             int total = 0, current = 0;
             for (int i = 0; i < targets.Count; i++)
             {
                 total += targets[i].Count;
-                current += full.GetCollectedCountOverride(targets[i], counts[i]);
+                current += counts[i];
             }
+            if (total <= 0) return;
+
+            if (kind == FullQuestBase.DescCounterTypes.ProgressBar)
+            {
+                entry.DescBar = true;
+                entry.DescHave = current;
+                entry.DescNeed = total;
+                entry.DescValue = (float)current / total;
+                return;
+            }
+
+            if (kind == FullQuestBase.DescCounterTypes.Text)
+            {
+                var rows = new List<DescRow>(targets.Count);
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    rows.Add(new DescRow
+                    {
+                        Icon = full.GetCounterSpriteOverride(targets[i], 0),
+                        Have = counts[i],
+                        Need = targets[i].Count,
+                    });
+                }
+                entry.DescRows = rows;
+                return;
+            }
+
             // A row of symbols is a picture of the job, and past a point it
-            // stops being one. The bar and the counts still say everything.
-            if (total <= 0 || total > MaxDescIcons) return;
+            // stops being one. Such a quest falls back to its totals as text,
+            // which says the same thing in a fixed amount of space.
+            if (total > MaxDescIcons)
+            {
+                entry.DescRows = new List<DescRow>(1)
+                {
+                    new DescRow
+                    {
+                        Icon = full.GetCounterSpriteOverride(targets[0], 0),
+                        Have = current,
+                        Need = total,
+                    },
+                };
+                return;
+            }
 
             var icons = new List<QuestIcon>(total);
             for (int i = 0; i < total; i++)
@@ -844,6 +930,8 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         catch (Exception e)
         {
             entry.DescIcons = null;
+            entry.DescRows = null;
+            entry.DescBar = false;
             Debug.LogWarning("[DsTasks] desc icons: " + e.Message);
         }
     }
@@ -1486,9 +1574,13 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
 
         // The targets, spelled out under the description. This is the part you
         // open a quest to see -- the description says what was asked for, the
-        // counters say how much of it is done -- and it is the whole reason the
-        // cell can afford to carry no number at all.
-        if (e.Steps.Count > 0 && !e.Completed)
+        // counters say how much of it is done.
+        //
+        // Skipped entirely when the quest draws SYMBOLS for the same thing.
+        // The row of icons under this text says "one Crown Fragment, not yet
+        // found" more directly than the line "- Crown Fragment 0/1" does, and
+        // printing both states it twice.
+        if (e.Steps.Count > 0 && !e.Completed && !HasDescCounter(e))
         {
             if (sb.Length > 0) sb.Append("\n\n");
             for (int i = 0; i < e.Steps.Count; i++)
@@ -1511,25 +1603,43 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         PaintDescIcons(e);
     }
 
+    /// <summary>Whether the description pane draws a counter of its own.</summary>
+    static bool HasDescCounter(Entry e)
+    {
+        return e != null && (e.DescIcons != null || e.DescRows != null || e.DescBar);
+    }
+
     /// <summary>
-    /// The symbol row at the bottom of the description pane.
+    /// The counter under the description: symbols, icon-and-count lines, or a
+    /// bar, whichever the quest asked for.
+    ///
+    /// Centred, and placed against the bottom of the prose rather than at the
+    /// bottom of the column: it is a statement ABOUT the description above it,
+    /// and parked in the far corner it read as an unrelated decoration of the
+    /// panel. Following the text means measuring the text, which TMP will do
+    /// for a given width.
     ///
     /// Rebuilt only when what it shows changes, not on every refresh: the pane
     /// is repainted once a second so that counters stay live, and destroying
-    /// and recreating a row of Images at that rate for a picture that has not
-    /// changed would be pure waste.
+    /// and recreating this at that rate for a picture that has not changed
+    /// would be pure waste.
     /// </summary>
     void PaintDescIcons(Entry e)
     {
         if (_iconBand == null) return;
 
-        var icons = e != null ? e.DescIcons : null;
         var sig = new System.Text.StringBuilder();
-        if (icons != null)
+        if (HasDescCounter(e))
         {
-            sig.Append(e.Key).Append(':');
-            for (int i = 0; i < icons.Count; i++)
-                sig.Append(icons[i].Filled ? '1' : '0');
+            sig.Append(e.Key).Append(':').Append(_desc != null ? _desc.text.Length : 0).Append(':');
+            if (e.DescIcons != null)
+                for (int i = 0; i < e.DescIcons.Count; i++)
+                    sig.Append(e.DescIcons[i].Filled ? '1' : '0');
+            if (e.DescRows != null)
+                for (int i = 0; i < e.DescRows.Count; i++)
+                    sig.Append(e.DescRows[i].Have).Append('/').Append(e.DescRows[i].Need).Append(',');
+            if (e.DescBar)
+                sig.Append('b').Append(e.DescHave).Append('/').Append(e.DescNeed);
         }
         string want = sig.ToString();
         if (want == _iconSig) return;
@@ -1538,45 +1648,183 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         for (int i = _iconBand.childCount - 1; i >= 0; i--)
             UnityEngine.Object.Destroy(_iconBand.GetChild(i).gameObject);
 
-        // The description gets the whole column back whenever there is no row
-        // under it, so a long one is not clipped to make space for nothing.
-        float full = _listH - 162f;
-        if (icons == null || icons.Count == 0)
-        {
-            DsWidgets.SetActive(_iconBand, false);
-            if (_desc != null)
-                DsWidgets.Place(_desc.rectTransform, 0f, 150f, _detailW, full);
-            return;
-        }
+        if (!HasDescCounter(e)) { DsWidgets.SetActive(_iconBand, false); return; }
         DsWidgets.SetActive(_iconBand, true);
 
-        int perRow = Mathf.Max(1, Mathf.FloorToInt((_detailW + DescIconGap) / (DescIconSize + DescIconGap)));
-        int rows = Mathf.CeilToInt((float)icons.Count / perRow);
-        float bandH = rows * DescIconSize + (rows - 1) * DescIconGap;
+        float scale = e.IconScale > 0f ? Mathf.Clamp(e.IconScale, 0.5f, 2f) : 1f;
+        float size = DescIconSize * scale;
 
-        DsWidgets.Place(_iconBand, 0f, 150f + full - bandH, _detailW, bandH);
-        if (_desc != null)
-            DsWidgets.Place(_desc.rectTransform, 0f, 150f, _detailW,
-                            Mathf.Max(60f, full - bandH - DescIconGap * 2f));
+        // How tall the block will be, worked out before anything is placed so
+        // it can be positioned as a whole.
+        float bandH;
+        int perRow = 1, rows = 1;
+        if (e.DescIcons != null)
+        {
+            perRow = Mathf.Max(1, Mathf.FloorToInt((_detailW + DescIconGap) / (size + DescIconGap)));
+            rows = Mathf.CeilToInt((float)e.DescIcons.Count / perRow);
+            bandH = rows * size + (rows - 1) * DescIconGap;
+        }
+        else if (e.DescRows != null)
+        {
+            bandH = e.DescRows.Count * size + (e.DescRows.Count - 1) * DescIconGap;
+        }
+        else
+        {
+            bandH = DescBarH + DescIconGap + DescCountSize;
+        }
+
+        // Where the prose actually ends. GetPreferredValues answers for a given
+        // width rather than for the rect the label happens to have, which is
+        // the number wanted here -- the rect is the whole remaining column.
+        float textH = 0f;
+        if (_desc != null && !string.IsNullOrEmpty(_desc.text))
+        {
+            try { textH = _desc.GetPreferredValues(_desc.text, _detailW, 0f).y; } catch { }
+        }
+        float top = DescTop + Mathf.Max(0f, textH) + DescIconTop;
+        float limit = DescTop + (_listH - 162f) - bandH;
+        if (top > limit) top = Mathf.Max(DescTop, limit);
+
+        DsWidgets.Place(_iconBand, 0f, top, _detailW, bandH);
+
+        if (e.DescIcons != null) PaintSymbolRow(e.DescIcons, size, perRow);
+        else if (e.DescRows != null) PaintCountRows(e.DescRows, size);
+        else PaintDescBar(e);
+    }
+
+    /// <summary>One symbol per unit asked for, wrapped and centred.</summary>
+    void PaintSymbolRow(List<QuestIcon> icons, float size, int perRow)
+    {
+        var silhouette = DsGameArt.QuestSilhouette();
 
         for (int i = 0; i < icons.Count; i++)
         {
             var icon = icons[i];
             int col = i % perRow, row = i / perRow;
+            // Each row centred on its own count, so a trailing short row sits
+            // under the middle of the one above rather than hanging left.
+            int inRow = Mathf.Min(perRow, icons.Count - row * perRow);
+            float rowW = inRow * size + (inRow - 1) * DescIconGap;
+            float x = (_detailW - rowW) * 0.5f + col * (size + DescIconGap);
 
-            var img = DsWidgets.Icon(_iconBand, "i" + i, icon.Sprite, Color.white);
-            img.preserveAspect = true;
-            // Collected symbols are the art as drawn; the rest are the flat
-            // dark shapes the game shows in their place. It gets that by
-            // swapping in a silhouette MATERIAL, which is not something we can
-            // carry across to this panel, so a dark tint stands in for it --
-            // the same reading at a glance, one shade off up close.
-            img.color = icon.Filled ? Color.white : DescIconEmpty;
-            DsWidgets.Place(img.rectTransform,
-                            col * (DescIconSize + DescIconGap),
-                            row * (DescIconSize + DescIconGap),
-                            DescIconSize, DescIconSize);
+            var slot = Symbol(_iconBand, "i" + i, icon.Sprite, icon.Filled, silhouette, size);
+            DsWidgets.Place(slot, x, row * (size + DescIconGap), size, size);
         }
+    }
+
+    /// <summary>
+    /// A symbol and a count per target, centred as a pair.
+    ///
+    /// The symbol is always drawn as collected art here. It is standing for
+    /// WHAT is wanted rather than for one unit of it -- the number beside it
+    /// carries how far along the quest is -- so silhouetting it would say
+    /// "none of this" even at 99 of 100.
+    /// </summary>
+    void PaintCountRows(List<DescRow> rows, float size)
+    {
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            string text = row.Have + "/" + row.Need;
+
+            var label = DsWidgets.Label(_iconBand, "n" + i, text, DescCountSize,
+                                        row.Have >= row.Need ? DsTheme.Ink : DsTheme.InkDim,
+                                        TmpAlign.Left);
+            float textW = 90f;
+            if (label != null)
+            {
+                label.enableWordWrapping = false;
+                try { textW = Mathf.Clamp(label.GetPreferredValues(text).x, 40f, 200f); } catch { }
+            }
+
+            bool hasIcon = row.Icon != null;
+            float pairW = (hasIcon ? size + DescIconGap : 0f) + textW;
+            float x = (_detailW - pairW) * 0.5f;
+            float y = i * (size + DescIconGap);
+
+            if (hasIcon)
+            {
+                var slot = Symbol(_iconBand, "ri" + i, row.Icon, true, null, size);
+                DsWidgets.Place(slot, x, y, size, size);
+            }
+            if (label != null)
+                DsWidgets.Place(label.rectTransform,
+                                x + (hasIcon ? size + DescIconGap : 0f), y, textW, size);
+        }
+    }
+
+    /// <summary>A bar across every target, with the total under it.</summary>
+    void PaintDescBar(Entry e)
+    {
+        float barW = Mathf.Min(DescBarW, _detailW);
+        float x = (_detailW - barW) * 0.5f;
+
+        var track = DsWidgets.Box(_iconBand, "track", DsTheme.Locked);
+        DsWidgets.Place(track.rectTransform, x, 0f, barW, DescBarH);
+
+        float value = Mathf.Clamp01(e.DescValue);
+        if (value > 0f)
+        {
+            var art = DsGameArt.QuestCounterArt();
+            var fill = DsWidgets.Icon(_iconBand, "fill",
+                                      art != null && art.Bar != null ? art.Bar : DsTheme.White,
+                                      Color.white);
+            fill.useSpriteMesh = false;
+            fill.preserveAspect = false;
+            fill.color = DsTheme.Ink;
+            DsWidgets.Place(fill.rectTransform, x, 0f, Mathf.Max(barW * value, 3f), DescBarH);
+        }
+
+        var label = DsWidgets.Label(_iconBand, "n", e.DescHave + "/" + e.DescNeed,
+                                    DescCountSize, DsTheme.InkDim, TmpAlign.Center);
+        if (label != null)
+            DsWidgets.Place(label.rectTransform, 0f, DescBarH + DescIconGap,
+                            _detailW, DescCountSize + 6f);
+    }
+
+    /// <summary>
+    /// One symbol, collected or not, centred in a slot of its own.
+    ///
+    /// The slot is not ceremony. An Image drawn with useSpriteMesh renders the
+    /// sprite's TRIMMED geometry, which is not centred within the sprite's rect
+    /// -- art with uneven transparent margins sits visibly to one side of a box
+    /// that is itself perfectly centred, and a row of them reads as shifted.
+    /// DsWidgets.FitCentred corrects for exactly that by shifting the rect back
+    /// by the mesh's own offset, and it centres within its PARENT, so each
+    /// symbol needs a parent of its own to be centred in.
+    ///
+    /// An uncollected symbol goes through the game's `Quest Silhouette`
+    /// material, whose shader REPLACES the sprite's colour with a flat fill and
+    /// keeps only its alpha. A tint cannot stand in for that: tinting
+    /// multiplies, so a gold item tinted grey is a dark gold item with all its
+    /// shading intact.
+    /// </summary>
+    static RectTransform Symbol(RectTransform parent, string name, Sprite sprite,
+                                bool filled, Material silhouette, float size)
+    {
+        var slot = DsWidgets.Rect(parent, name);
+        var img = DsWidgets.Icon(slot, "s", sprite, Color.white);
+        img.preserveAspect = true;
+
+        // Sets the sprite and the rect; colour comes after, since it forces
+        // white.
+        if (sprite != null) DsWidgets.FitCentred(img, sprite, size, size);
+
+        if (filled || silhouette == null)
+        {
+            // No material to hand: a flat tint is the fallback. It keeps the
+            // art's own shading and so reads as a dimmed item rather than an
+            // absent one -- worse, but legible.
+            img.color = filled ? Color.white : DescIconEmpty;
+        }
+        else
+        {
+            // The shader replaces colour outright, so the vertex colour must
+            // not tint it a second time.
+            img.material = silhouette;
+            img.color = Color.white;
+        }
+        return slot;
     }
 
     // ── input ───────────────────────────────────────────────────────────────

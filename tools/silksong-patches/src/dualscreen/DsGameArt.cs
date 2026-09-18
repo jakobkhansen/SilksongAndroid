@@ -90,6 +90,7 @@ public static class DsGameArt
         _inventory = null; _cursor = null; _nextInventorySearch = 0f;
         _questFluer = null; _questSectionRule = null; _nextFluerSearch = 0f;
         _questCounter = null; _nextCounterSearch = 0f;
+        if (_silhouette != null) { UnityEngine.Object.Destroy(_silhouette); _silhouette = null; }
     }
 
     public static Sprite TabIcon(InventoryPaneList.PaneTypes type)
@@ -416,14 +417,34 @@ public static class DsGameArt
         /// quest asked for a dark tint.
         /// </summary>
         public Color FilledColour = Color.white, EmptyColour = Color.white;
+        /// <summary>
+        /// The material an uncollected symbol is drawn through: `Quest
+        /// Silhouette`, whose shader replaces the sprite's colour outright
+        /// rather than tinting it. Read from the SYMBOL counter, not the dots.
+        /// </summary>
+        public Material EmptyMaterial;
         /// <summary>The filled part of a progress bar.</summary>
         public Sprite Bar;
+
+        /// <summary>
+        /// The description pane's SYMBOL states, which are a different counter
+        /// from the list's dots and are set up differently: the dots carry no
+        /// material at all, while the symbols carry `Quest Silhouette` on their
+        /// inactive state. Reading the dots' states and hoping is how the
+        /// symbols came out as dimmed art instead of flat shapes.
+        /// </summary>
+        public Color SymbolFilled = Color.white, SymbolEmpty = new Color(0.22f, 0.22f, 0.22f, 1f);
+        public Material SymbolEmptyMaterial;
 
         public bool Ok { get { return DotFilled != null || DotEmpty != null || Bar != null; } }
         /// <summary>Nothing left to look for.</summary>
         public bool Complete
         {
-            get { return DotFilled != null && DotEmpty != null && Bar != null; }
+            get
+            {
+                return DotFilled != null && DotEmpty != null && Bar != null &&
+                       SymbolEmptyMaterial != null;
+            }
         }
     }
 
@@ -465,8 +486,10 @@ public static class DsGameArt
                     var template = PrivateField(counter, typeof(IconCounter), "templateItem") as IconCounterItem;
                     if (template != null)
                     {
-                        ReadDotState(template, "activeState", ref found.DotFilled, ref found.FilledColour);
-                        ReadDotState(template, "inactiveState", ref found.DotEmpty, ref found.EmptyColour);
+                        ReadDotState(template, "activeState",
+                                     ref found.DotFilled, ref found.FilledColour, ref _ignored);
+                        ReadDotState(template, "inactiveState",
+                                     ref found.DotEmpty, ref found.EmptyColour, ref found.EmptyMaterial);
                     }
                 }
 
@@ -478,6 +501,28 @@ public static class DsGameArt
                         var img = PrivateField(slider, typeof(ImageSlider), "image") as UnityEngine.UI.Image;
                         if (img != null && img.sprite != null) found.Bar = img.sprite;
                     }
+                }
+            }
+
+            // The symbols are a DIFFERENT counter: QuestItemDescription's
+            // rangeDisplay, whose template carries the silhouette material the
+            // list's dots do not have.
+            if (found.SymbolEmptyMaterial == null)
+            {
+                var panes = Resources.FindObjectsOfTypeAll<QuestItemDescription>();
+                for (int i = 0; i < panes.Length && found.SymbolEmptyMaterial == null; i++)
+                {
+                    if (panes[i] == null) continue;
+                    var range = PrivateField(panes[i], typeof(QuestItemDescription), "rangeDisplay") as IconCounter;
+                    if (range == null) continue;
+                    var template = PrivateField(range, typeof(IconCounter), "templateItem") as IconCounterItem;
+                    if (template == null) continue;
+
+                    Sprite unused = null;
+                    Material none = null;
+                    ReadDotState(template, "activeState", ref unused, ref found.SymbolFilled, ref none);
+                    ReadDotState(template, "inactiveState", ref unused, ref found.SymbolEmpty,
+                                 ref found.SymbolEmptyMaterial);
                 }
             }
         }
@@ -497,7 +542,8 @@ public static class DsGameArt
     /// is read field by field off the boxed value. Its own fields are public
     /// within it, which is why this asks for public members of a private type.
     /// </summary>
-    static void ReadDotState(IconCounterItem item, string field, ref Sprite sprite, ref Color colour)
+    static void ReadDotState(IconCounterItem item, string field,
+                             ref Sprite sprite, ref Color colour, ref Material material)
     {
         try
         {
@@ -509,6 +555,7 @@ public static class DsGameArt
             var type = state.GetType();
             var spriteField = type.GetField("Sprite");
             var colourField = type.GetField("Color");
+            var materialField = type.GetField("Material");
 
             if (spriteField != null)
             {
@@ -517,8 +564,55 @@ public static class DsGameArt
             }
             if (colourField != null && colourField.FieldType == typeof(Color))
                 colour = (Color)colourField.GetValue(state);
+            if (materialField != null)
+            {
+                var m = materialField.GetValue(state) as Material;
+                if (m != null) material = m;
+            }
         }
         catch { }
+    }
+
+    /// <summary>Somewhere for a state's material to go when we do not want it.</summary>
+    static Material _ignored;
+
+    static Material _silhouette;
+
+    /// <summary>
+    /// The material the game draws an UNCOLLECTED symbol through.
+    ///
+    /// This is not a dim tint, and the difference is the whole look: the
+    /// material is `Quest Silhouette`, whose shader is Sprites_Default-ColorFlash
+    /// with `_FlashAmount` at 1 -- the sprite's colour is REPLACED by
+    /// `_FlashColor`, leaving only its alpha. A tint multiplies instead, so a
+    /// gold item tinted grey stays a dark gold item with all its shading; run
+    /// through this it becomes a flat featureless shape, which is what says
+    /// "not yet" at a glance.
+    ///
+    /// IconCounterItem carries `setFlashColour`, and pushes the state's own
+    /// colour into `_FlashColor` per item. Every uncollected symbol shares one
+    /// colour, so one shared instance does for all of them rather than a
+    /// material per icon.
+    /// </summary>
+    public static Material QuestSilhouette()
+    {
+        if (_silhouette != null) return _silhouette;
+
+        var art = QuestCounterArt();
+        if (art == null || art.SymbolEmptyMaterial == null) return null;
+
+        try
+        {
+            var m = new Material(art.SymbolEmptyMaterial) { hideFlags = HideFlags.HideAndDontSave };
+            if (m.HasProperty("_FlashAmount")) m.SetFloat("_FlashAmount", 1f);
+            if (m.HasProperty("_FlashColor")) m.SetColor("_FlashColor", art.SymbolEmpty);
+            _silhouette = m;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DualScreen] quest silhouette unavailable: " + e.Message);
+        }
+        return _silhouette;
     }
 
     static object PrivateField(object owner, System.Type type, string name)
