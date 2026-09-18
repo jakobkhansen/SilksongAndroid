@@ -600,17 +600,11 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
                 int need = target.Count;
                 if (need <= 0) continue;              // nothing to count towards
 
-                string label = null;
-                try
-                {
-                    if (target.Counter != null) label = target.Counter.GetUIMsgName();
-                    if (string.IsNullOrEmpty(label)) label = target.ItemName;
-                }
-                catch { }
+                string label = TargetLabel(target);
 
                 entry.Steps.Add(new Step
                 {
-                    Name = string.IsNullOrEmpty(label) ? "Progress" : label,
+                    Name = label,                         // null when it has no usable name
                     Have = Mathf.Min(pair.count, need),   // the game can over-count; the goal is the cap
                     Need = need,
                 });
@@ -696,6 +690,52 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
             entry.Progress.Kind = FullQuestBase.ListCounterTypes.None;
             Debug.LogWarning("[DsTasks] counter: " + e.Message);
         }
+    }
+
+    /// <summary>
+    /// What to call one of a quest's targets, or null when it has no name
+    /// worth showing.
+    ///
+    /// The order is the game's, from FullQuestBase.MaybeAppendItemList: the
+    /// ITEM's name when it has one, and only otherwise the counter's popup
+    /// name. This used to ask the counter first, which is how a target with a
+    /// perfectly good item name ended up labelled by its counter instead.
+    /// </summary>
+    static string TargetLabel(FullQuestBase.QuestTarget target)
+    {
+        string label = null;
+        try
+        {
+            // IsEmpty BEFORE converting, which is the whole trick -- see
+            // Localised below for what an unguarded conversion produces.
+            var itemName = target.ItemName;
+            if (!itemName.IsEmpty) label = itemName;
+            else if (target.Counter != null) label = target.Counter.GetUIMsgName();
+        }
+        catch { }
+        return Localised(label);
+    }
+
+    /// <summary>
+    /// A localised string, or null if what came back is not real text.
+    ///
+    /// An empty LocalisedString does NOT convert to an empty string. Team
+    /// Cherry's lookup answers an unresolvable entry with the literal
+    /// "!!" + Sheet + "/" + Key + "!!", so a target with no name set arrives as
+    /// the four characters "!!/!!" -- which is not null, not empty, not
+    /// whitespace, and sails through every test of that kind.
+    ///
+    /// It showed up as "- !!/!!   71/100" beside a quest's progress, and it is
+    /// worth guarding rather than special-casing because the same marker can
+    /// come back from a key that simply has no translation in the current
+    /// language.
+    /// </summary>
+    static string Localised(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        s = s.Trim();
+        if (s.Length >= 4 && s.StartsWith("!!") && s.EndsWith("!!")) return null;
+        return s;
     }
 
     // ── layout ──────────────────────────────────────────────────────────────
@@ -1139,44 +1179,26 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     /// <summary>
     /// The rule under the priorities. Returns its height.
     ///
-    /// The game's own is not a plain line: its `currentHeading` carries the
-    /// same filigree the COMPLETED caption is flanked by, with the two halves
-    /// meeting in the middle and a hairline running out from each. It is also
-    /// centred and well short of the column's width, which is what stops it
-    /// reading as the end of the list.
+    /// A single tapered hairline, centred and well short of the column. That is
+    /// the shape the game's own `currentHeading` has: one `Spacer` sprite of
+    /// 7.53 x 0.34 world units -- a 22:1 line -- with no ornament on it at all.
+    ///
+    /// It was briefly drawn as a pair of mirrored fluers meeting in the middle,
+    /// on the strength of a glance at a screenshot. That is the COMPLETED
+    /// caption's decoration, and putting two of them nose to nose here made a
+    /// heavy knot the game does not have. The ornament belongs to the captioned
+    /// rule; this one is a line.
     /// </summary>
     float MakePlainDivider(float y)
     {
         var root = DsWidgets.Rect(_list, "div" + _dividers.Count);
         DsWidgets.Place(root, 0f, y, ListW, PlainDividerH);
 
-        float mid = PlainDividerH * 0.5f;
-        float left = (ListW - PlainRuleW) * 0.5f;
-        float right = left + PlainRuleW;
-        float centre = ListW * 0.5f;
-
-        var art = DsGameArt.QuestDivider();
-        float fluerW = 0f;
-        if (art != null)
-        {
-            fluerW = OrnamentWidth(art, FluerH);
-            // The pair meets at the centre line: the left half ends there and
-            // the mirrored right half begins there.
-            Ornament(root, "fluer-l", art, centre - fluerW, mid - FluerH * 0.5f, fluerW, false);
-            Ornament(root, "fluer-r", art, centre, mid - FluerH * 0.5f, fluerW, true);
-        }
-
-        float reach = centre - fluerW - left;
-        if (reach > 8f)
-        {
-            DsWidgets.HRule(root, "rule-l", left, mid, reach);
-            DsWidgets.HRule(root, "rule-r", right - reach, mid, reach);
-        }
-        else
-        {
-            // No room either side of the ornament, so the rule is the line.
-            DsWidgets.HRule(root, "rule", left, mid, PlainRuleW);
-        }
+        // DsRuleArt's hairline fades to nothing at both ends, so a centred span
+        // of it reads as the game's tapered line rather than as a bar with cut
+        // ends -- see the note there on why it is stretched whole.
+        DsWidgets.HRule(root, "rule", (ListW - PlainRuleW) * 0.5f,
+                        PlainDividerH * 0.5f, PlainRuleW);
 
         _dividers.Add(new Divider { Root = root, Y = y, H = PlainDividerH });
         return PlainDividerH;
@@ -1332,9 +1354,15 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
             {
                 var s = e.Steps[i];
                 if (i > 0) sb.Append('\n');
-                sb.Append(s.Have >= s.Need ? "* " : "- ")
-                  .Append(s.Name).Append("   ")
-                  .Append(s.Have).Append('/').Append(s.Need);
+
+                // A target with no name of its own is just a number. The bullet
+                // is a list marker for a list of things, and "- 71/100" reads as
+                // a thing whose name failed to load rather than as a count.
+                if (!string.IsNullOrEmpty(s.Name))
+                    sb.Append(s.Have >= s.Need ? "* " : "- ")
+                      .Append(s.Name).Append("   ");
+
+                sb.Append(s.Have).Append('/').Append(s.Need);
             }
         }
 
