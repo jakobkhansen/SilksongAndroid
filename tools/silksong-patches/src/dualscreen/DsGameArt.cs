@@ -88,7 +88,7 @@ public static class DsGameArt
     public static void Forget()
     {
         _inventory = null; _cursor = null; _nextInventorySearch = 0f;
-        _nextFluerSearch = 0f;
+        _questFluer = null; _questSectionRule = null; _nextFluerSearch = 0f;
         _questCounter = null; _nextCounterSearch = 0f;
     }
 
@@ -297,6 +297,7 @@ public static class DsGameArt
     // ── the quest list's divider ────────────────────────────────────────────
 
     static Sprite _questFluer;
+    static Sprite _questSectionRule;
     static float _nextFluerSearch;
 
     /// <summary>
@@ -321,40 +322,80 @@ public static class DsGameArt
     public static Sprite QuestDivider()
     {
         if (_questFluer != null) return _questFluer;
+        if (!SearchHeadings()) return null;
+        return _questFluer;
+    }
+
+    /// <summary>
+    /// The rule the game puts between the prioritised quest and the rest.
+    ///
+    /// This is NOT the fluer above. InventoryItemQuestManager.currentHeading
+    /// holds a single child called `Spacer` carrying one wide, thin sprite --
+    /// 7.53 x 0.34 world units, a 22:1 line with an ornate knot worked into its
+    /// middle. One piece of art, drawn whole.
+    ///
+    /// Worth a warning for anyone who goes looking: in the decompiled prefab
+    /// that renderer reads `m_Enabled: 0`, which says the object draws nothing.
+    /// On the running game it plainly does. The serialised state is the
+    /// template's, not the live one, so the prefab can say a thing is invisible
+    /// while the pane in front of you is drawing it -- which is exactly how
+    /// this rule came to be reimplemented twice from a screenshot instead of
+    /// simply being read.
+    /// </summary>
+    public static Sprite QuestSectionRule()
+    {
+        if (_questSectionRule != null) return _questSectionRule;
+        if (!SearchHeadings()) return null;
+        return _questSectionRule;
+    }
+
+    /// <summary>
+    /// Look for both headings' art in one pass. False when the search is
+    /// rate-limited, so the callers can return their cached answer.
+    /// </summary>
+    static bool SearchHeadings()
+    {
+        if (_questFluer != null && _questSectionRule != null) return true;
         // FindObjectsOfTypeAll walks every loaded object, so it is rate-limited
         // the way the inventory lookup is rather than run per rebuild.
-        if (Time.unscaledTime < _nextFluerSearch) return null;
+        if (Time.unscaledTime < _nextFluerSearch) return false;
         _nextFluerSearch = Time.unscaledTime + 2f;
 
+        if (_questFluer == null) _questFluer = HeadingSprite("completedHeading");
+        if (_questSectionRule == null) _questSectionRule = HeadingSprite("currentHeading");
+        return true;
+    }
+
+    /// <summary>The first sprite under one of the quest manager's headings.</summary>
+    static Sprite HeadingSprite(string field)
+    {
         try
         {
-            var field = typeof(InventoryItemQuestManager).GetField("completedHeading", Priv);
-            if (field == null) return null;
+            var f = typeof(InventoryItemQuestManager).GetField(field, Priv);
+            if (f == null) return null;
 
             var managers = Resources.FindObjectsOfTypeAll<InventoryItemQuestManager>();
-            for (int i = 0; i < managers.Length && _questFluer == null; i++)
+            for (int i = 0; i < managers.Length; i++)
             {
                 if (managers[i] == null) continue;
-                var heading = field.GetValue(managers[i]) as Transform;
+                var heading = f.GetValue(managers[i]) as Transform;
                 if (heading == null) continue;
 
-                // Include inactive: the heading is switched off whenever the
-                // player has no completed quests, which is exactly when a new
-                // save is most likely to be looking at this screen.
+                // Include inactive, and note that a DISABLED renderer is still
+                // returned here -- which matters, because the section rule's is
+                // disabled in the serialised prefab. We only want the sprite
+                // reference, not the renderer's opinion about drawing it.
                 var renderers = heading.GetComponentsInChildren<SpriteRenderer>(true);
                 for (int r = 0; r < renderers.Length; r++)
-                {
-                    if (renderers[r] == null || renderers[r].sprite == null) continue;
-                    _questFluer = renderers[r].sprite;
-                    break;
-                }
+                    if (renderers[r] != null && renderers[r].sprite != null)
+                        return renderers[r].sprite;
             }
         }
         catch (System.Exception e)
         {
-            Debug.LogWarning("[DualScreen] quest divider art unavailable: " + e.Message);
+            Debug.LogWarning("[DualScreen] quest " + field + " art unavailable: " + e.Message);
         }
-        return _questFluer;
+        return null;
     }
 
     // ── the quest list's progress counters ──────────────────────────────────

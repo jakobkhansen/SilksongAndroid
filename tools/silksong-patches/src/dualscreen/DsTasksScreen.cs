@@ -91,8 +91,23 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         public readonly List<Step> Steps = new List<Step>();
         /// <summary>The dots or bar drawn under the name.</summary>
         public Counter Progress;
+        /// <summary>
+        /// The symbols the description pane shows, one per thing to collect.
+        /// Null unless the quest asks for them.
+        /// </summary>
+        public List<QuestIcon> DescIcons;
         /// <summary>True when everything asked for is done but it is not handed in.</summary>
         public bool Ready;
+    }
+
+    /// <summary>
+    /// One symbol in the description pane's icon row: the thing being
+    /// collected, and whether it has been.
+    /// </summary>
+    struct QuestIcon
+    {
+        public Sprite Sprite;
+        public bool Filled;
     }
 
     /// <summary>One of a quest's targets: what to collect, how many, how many so far.</summary>
@@ -225,6 +240,15 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     // GameObjects; past it the row switches to a bar, which says the same thing
     // in a fixed amount of space.
     const int MaxDots = 24;
+
+    // The description pane's symbol row. One per unit collected, wrapped into
+    // rows at the pane's width, drawn at the bottom of the column the way the
+    // game puts its own in a bottom section.
+    const float DescIconSize = 46f;
+    const float DescIconGap  = 10f;
+    const int   MaxDescIcons = 24;
+    /// <summary>The tint an uncollected symbol is drawn in.</summary>
+    static readonly Color DescIconEmpty = new Color(0.26f, 0.25f, 0.28f, 1f);
     // Long names shrink rather than truncate. "The Threadspun Town" does not fit
     // a half-width cell at 34, and a name is the one thing on this screen that
     // must arrive whole -- half of it is not a smaller version of the
@@ -269,7 +293,12 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     readonly DsCursor _cursor = new DsCursor();
 
     RectTransform _host, _list, _detail;
+    /// <summary>Holds the description pane's symbol row; its children are rebuilt.</summary>
+    RectTransform _iconBand;
+    /// <summary>What the symbol row currently shows, so it is not rebuilt every second.</summary>
+    string _iconSig;
     TmpText _title, _type, _desc, _empty;
+    float _detailW;
 
     Rect _listRect;             // panel space, for hit-testing
     float _listTop, _listH;
@@ -353,6 +382,9 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
                                 DsTheme.InkDim, TmpAlign.TopLeft);
         if (_desc != null)
             DsWidgets.Place(_desc.rectTransform, 0f, 150f, detailW, _listH - 162f);
+
+        _detailW = detailW;
+        _iconBand = DsWidgets.Rect(_detail, "desc-icons");
 
         // In the scroll mask, with the cells. A half-scrolled cell gets a
         // half-drawn caret, and one scrolled away takes its caret with it.
@@ -445,14 +477,13 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         // rebuild can see and the cells stay exactly where they were.
         sig.Append(_showCompleted ? "S;" : "H;");
 
-        // So does whether the game has handed us the divider ornament yet. It
-        // arrives only once the game's own inventory has been opened, which can
-        // happen while this screen is sitting in front of the player, and a
-        // divider drawn before then has to be rebuilt to pick the art up.
-        // Asking costs nothing here -- DsGameArt rate-limits the search itself
-        // -- and is skipped entirely when no divider is being drawn.
-        if (_showCompleted && _completedCount > 0)
-            sig.Append(DsGameArt.QuestDivider() != null ? "F;" : "f;");
+        // So does whether the game has handed us the dividers yet. They arrive
+        // only once the game's own inventory has been opened, which can happen
+        // while this screen is sitting in front of the player, and one drawn
+        // before then has to be rebuilt to pick the art up. Asking costs
+        // nothing here -- DsGameArt rate-limits the search itself.
+        sig.Append(DsGameArt.QuestDivider() != null ? "F" : "f");
+        sig.Append(DsGameArt.QuestSectionRule() != null ? "R;" : "r;");
 
         // And the same for the dot and bar art, for the same reason: a cell
         // drawn with the fallback shapes has to be rebuilt once the game's own
@@ -568,6 +599,7 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
             };
             CollectSteps(full, entry);
             CollectCounter(full, entry);
+            CollectDescIcons(full, entry);
             into.Add(entry);
         }
     }
@@ -736,6 +768,100 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         s = s.Trim();
         if (s.Length >= 4 && s.StartsWith("!!") && s.EndsWith("!!")) return null;
         return s;
+    }
+
+    /// <summary>
+    /// The symbols the description pane shows for what a quest collects,
+    /// following QuestItemDescription.SetDisplay's Icons branch.
+    ///
+    /// One symbol per unit asked for -- three Flintgems is three symbols -- and
+    /// each is drawn whether or not it has been collected yet, which is the
+    /// point of them: the row shows the shape of the job before you have done
+    /// any of it, where "0/3" only tells you the size of it.
+    ///
+    /// The rules, all of them the game's:
+    ///
+    ///   * the count is the sum of every target's Count, and the sprite for the
+    ///     symbol at a flat index belongs to whichever target that index falls
+    ///     inside -- FindTargetIndex walks the targets accumulating their
+    ///     counts, which is how one row spans several different things.
+    ///   * GetCounterSpriteOverride picks the art: a quest-wide override first,
+    ///     then the target's AltSprite, then the counter's own icon for that
+    ///     index -- so a quest collecting three different items can show three
+    ///     different symbols.
+    ///   * GetCollectedCountOverride, not the raw count, says how many are
+    ///     done; a quest may answer that question its own way.
+    ///   * with ONE target the symbols fill in order, and with several each
+    ///     target's symbols fill only when that whole target is finished, which
+    ///     is SetFilledOverride's delegate.
+    /// </summary>
+    static void CollectDescIcons(FullQuestBase full, Entry entry)
+    {
+        if (full == null || entry.Completed) return;
+
+        try
+        {
+            // DescCounterType, like ListCounterType, answers None by itself for
+            // a completable quest that hides its counters, and also for
+            // languages a quest opts out of.
+            if (full.DescCounterType != FullQuestBase.DescCounterTypes.Icons) return;
+
+            var targets = new List<FullQuestBase.QuestTarget>();
+            var counts = new List<int>();
+            foreach (var pair in full.TargetsAndCounters)
+            {
+                targets.Add(pair.target);
+                counts.Add(pair.count);
+            }
+            if (targets.Count == 0) return;
+
+            int total = 0, current = 0;
+            for (int i = 0; i < targets.Count; i++)
+            {
+                total += targets[i].Count;
+                current += full.GetCollectedCountOverride(targets[i], counts[i]);
+            }
+            // A row of symbols is a picture of the job, and past a point it
+            // stops being one. The bar and the counts still say everything.
+            if (total <= 0 || total > MaxDescIcons) return;
+
+            var icons = new List<QuestIcon>(total);
+            for (int i = 0; i < total; i++)
+            {
+                int t = FindTargetIndex(targets, i);
+                bool filled = targets.Count <= 1
+                            ? i < current
+                            : counts[t] >= targets[t].Count;
+
+                icons.Add(new QuestIcon
+                {
+                    Sprite = full.GetCounterSpriteOverride(targets[t], i),
+                    Filled = filled,
+                });
+            }
+            entry.DescIcons = icons;
+        }
+        catch (Exception e)
+        {
+            entry.DescIcons = null;
+            Debug.LogWarning("[DsTasks] desc icons: " + e.Message);
+        }
+    }
+
+    /// <summary>
+    /// Which target owns the symbol at a flat index, by accumulating counts.
+    /// QuestItemDescription's own local function of the same name.
+    /// </summary>
+    static int FindTargetIndex(List<FullQuestBase.QuestTarget> targets, int index)
+    {
+        int result = 0, seen = 0;
+        for (int i = 0; i < targets.Count; i++)
+        {
+            result = i;
+            seen += targets[i].Count;
+            if (seen > index) break;
+        }
+        return result;
     }
 
     // ── layout ──────────────────────────────────────────────────────────────
@@ -1179,26 +1305,41 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     /// <summary>
     /// The rule under the priorities. Returns its height.
     ///
-    /// A single tapered hairline, centred and well short of the column. That is
-    /// the shape the game's own `currentHeading` has: one `Spacer` sprite of
-    /// 7.53 x 0.34 world units -- a 22:1 line -- with no ornament on it at all.
+    /// The game draws one piece of art here: `currentHeading`'s `Spacer`, a
+    /// 22:1 line with an ornate knot worked into its middle. So this draws that
+    /// sprite whole, at its own aspect, centred and well short of the column --
+    /// rather than assembling something out of the COMPLETED caption's
+    /// ornament, which is a different piece of art for a different job.
     ///
-    /// It was briefly drawn as a pair of mirrored fluers meeting in the middle,
-    /// on the strength of a glance at a screenshot. That is the COMPLETED
-    /// caption's decoration, and putting two of them nose to nose here made a
-    /// heavy knot the game does not have. The ornament belongs to the captioned
-    /// rule; this one is a line.
+    /// The plain hairline remains the fallback for before the game's pane
+    /// exists, which is the only time the sprite is unavailable.
     /// </summary>
     float MakePlainDivider(float y)
     {
         var root = DsWidgets.Rect(_list, "div" + _dividers.Count);
         DsWidgets.Place(root, 0f, y, ListW, PlainDividerH);
 
-        // DsRuleArt's hairline fades to nothing at both ends, so a centred span
-        // of it reads as the game's tapered line rather than as a bar with cut
-        // ends -- see the note there on why it is stretched whole.
-        DsWidgets.HRule(root, "rule", (ListW - PlainRuleW) * 0.5f,
-                        PlainDividerH * 0.5f, PlainRuleW);
+        float left = (ListW - PlainRuleW) * 0.5f;
+        var art = DsGameArt.QuestSectionRule();
+
+        if (art != null)
+        {
+            // Height follows the art's own aspect, so the knot in the middle
+            // keeps its shape. Capped at the band, since a sprite far from the
+            // expected 22:1 would otherwise overflow the row.
+            var r = art.rect;
+            float h = Mathf.Min(PlainRuleW * (r.height / Mathf.Max(r.width, 1f)), PlainDividerH);
+            var img = DsWidgets.Icon(root, "rule", art, DsTheme.Rule);
+            // Drawn as a plain quad: the line is mostly transparent by design
+            // and a trimmed mesh would crop the taper off its ends.
+            img.useSpriteMesh = false;
+            img.preserveAspect = false;
+            DsWidgets.Place(img.rectTransform, left, (PlainDividerH - h) * 0.5f, PlainRuleW, h);
+        }
+        else
+        {
+            DsWidgets.HRule(root, "rule", left, PlainDividerH * 0.5f, PlainRuleW);
+        }
 
         _dividers.Add(new Divider { Root = root, Y = y, H = PlainDividerH });
         return PlainDividerH;
@@ -1339,7 +1480,7 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         }
         if (_title != null) _title.text = ok ? e.Name : "";
         if (_desc == null) return;
-        if (!ok) { _desc.text = ""; return; }
+        if (!ok) { _desc.text = ""; PaintDescIcons(null); return; }
 
         var sb = new System.Text.StringBuilder(e.Desc ?? "");
 
@@ -1367,6 +1508,75 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         }
 
         _desc.text = sb.ToString();
+        PaintDescIcons(e);
+    }
+
+    /// <summary>
+    /// The symbol row at the bottom of the description pane.
+    ///
+    /// Rebuilt only when what it shows changes, not on every refresh: the pane
+    /// is repainted once a second so that counters stay live, and destroying
+    /// and recreating a row of Images at that rate for a picture that has not
+    /// changed would be pure waste.
+    /// </summary>
+    void PaintDescIcons(Entry e)
+    {
+        if (_iconBand == null) return;
+
+        var icons = e != null ? e.DescIcons : null;
+        var sig = new System.Text.StringBuilder();
+        if (icons != null)
+        {
+            sig.Append(e.Key).Append(':');
+            for (int i = 0; i < icons.Count; i++)
+                sig.Append(icons[i].Filled ? '1' : '0');
+        }
+        string want = sig.ToString();
+        if (want == _iconSig) return;
+        _iconSig = want;
+
+        for (int i = _iconBand.childCount - 1; i >= 0; i--)
+            UnityEngine.Object.Destroy(_iconBand.GetChild(i).gameObject);
+
+        // The description gets the whole column back whenever there is no row
+        // under it, so a long one is not clipped to make space for nothing.
+        float full = _listH - 162f;
+        if (icons == null || icons.Count == 0)
+        {
+            DsWidgets.SetActive(_iconBand, false);
+            if (_desc != null)
+                DsWidgets.Place(_desc.rectTransform, 0f, 150f, _detailW, full);
+            return;
+        }
+        DsWidgets.SetActive(_iconBand, true);
+
+        int perRow = Mathf.Max(1, Mathf.FloorToInt((_detailW + DescIconGap) / (DescIconSize + DescIconGap)));
+        int rows = Mathf.CeilToInt((float)icons.Count / perRow);
+        float bandH = rows * DescIconSize + (rows - 1) * DescIconGap;
+
+        DsWidgets.Place(_iconBand, 0f, 150f + full - bandH, _detailW, bandH);
+        if (_desc != null)
+            DsWidgets.Place(_desc.rectTransform, 0f, 150f, _detailW,
+                            Mathf.Max(60f, full - bandH - DescIconGap * 2f));
+
+        for (int i = 0; i < icons.Count; i++)
+        {
+            var icon = icons[i];
+            int col = i % perRow, row = i / perRow;
+
+            var img = DsWidgets.Icon(_iconBand, "i" + i, icon.Sprite, Color.white);
+            img.preserveAspect = true;
+            // Collected symbols are the art as drawn; the rest are the flat
+            // dark shapes the game shows in their place. It gets that by
+            // swapping in a silhouette MATERIAL, which is not something we can
+            // carry across to this panel, so a dark tint stands in for it --
+            // the same reading at a glance, one shade off up close.
+            img.color = icon.Filled ? Color.white : DescIconEmpty;
+            DsWidgets.Place(img.rectTransform,
+                            col * (DescIconSize + DescIconGap),
+                            row * (DescIconSize + DescIconGap),
+                            DescIconSize, DescIconSize);
+        }
     }
 
     // ── input ───────────────────────────────────────────────────────────────
