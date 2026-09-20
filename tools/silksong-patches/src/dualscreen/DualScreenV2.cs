@@ -164,6 +164,7 @@ public class DualScreenV2 : MonoBehaviour
         }
 
         DsProbe.MaybeRun();
+        DsProbe.MaybeDumpSprites();
         DsProbe.MaybeDumpFonts();
 
         // The game's fonts are not loaded when we start, so text would build

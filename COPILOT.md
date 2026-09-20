@@ -234,7 +234,7 @@ needle, for instance, is not a sprite on a component but one of five child
 objects the game activates, and the currency icons are 2D Toolkit sprites with
 no `Sprite` object at all. Guessing costs a build each time.
 
-So the dual-screen code ships two diagnostics, switched on by a file rather
+So the dual-screen code ships these diagnostics, switched on by a file rather
 than compiled in:
 
 ```sh
@@ -243,6 +243,14 @@ F=/sdcard/Android/data/com.jakobkhansen.silksong/files/dualscreen_v2
 adb shell "echo 'probe=1'    > $F"   # dump the inventory hierarchy to logcat
 adb shell "echo 'testcard=1' > $F"   # draw the second screen's test card
 adb shell "echo 'map_diag=1' > $F"   # log the map panel's state as it changes
+
+# every sprite whose name contains the text, written out as PNG, plus the whole
+# atlas page each one came from. `sprite_dump=1` LISTS every sprite's name, rect
+# and page to the log but writes no files -- writing them all locks the device
+# up hard enough to need adb to recover it.
+adb shell "echo 'sprite_dump=UI_tool_slot' > $F"
+adb pull /sdcard/Android/data/com.jakobkhansen.silksong/files/sprites
+
 adb shell "rm -f $F"                 # back to normal
 
 adb shell am force-stop com.jakobkhansen.silksong   # settings are read once per process
@@ -250,9 +258,18 @@ adb logcat -d | grep DsProbe
 ```
 
 `probe=1` logs every object under the game's inventory with its components and
-sprite names, which turns "where does this icon live" into a lookup. Adding a
-knob is one line in `DsConfig`; keeping it costs nothing and saves a build the
-next time the question comes up.
+sprite names, which turns "where does this icon live" into a lookup.
+`sprite_dump` answers the next question along — *what does that sprite actually
+look like* — for art that exists only in an atlas at runtime, since most sprite
+references in the decompile point at a placeholder GUID with no PNG on disk.
+It writes the page as well as the sprite because a sprite's rect is the one
+thing that can still be wrong, and a page is proof: the crest's locked-socket
+glyph was found that way, spotted on a page and matched back to a sprite by
+rect. It is called `Tool_slot_lock_ring`, while every other glyph in its family
+is `UI_tool_slot_*`, so no amount of guessing at names would have reached it.
+
+Adding a knob is one line in `DsConfig`; keeping it costs nothing and saves a
+build the next time the question comes up.
 
 
 ## Knobs

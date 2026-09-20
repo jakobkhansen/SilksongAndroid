@@ -62,7 +62,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     // reflowed each time would be worse than a gap that does not move.
     static readonly float ActionBand = DsActionBar.PaneBand(2);
     const int   ListColumns = 3;
-    const float SlotIcon = 82f;
+    const float SlotIcon = 96f;
     const float ExtraIcon = 74f;
     // How strongly the crest artwork itself is drawn. A knob, like the cursor's
     // sizes, because it is judged by eye against the tools on top of it.
@@ -417,18 +417,22 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         var holder = DsWidgets.Rect(_crestBox, "slot" + _slotRects.Count);
         DsWidgets.Place(holder, x, y, size, size);
 
-        // A locked socket is not a slot drawn grey: the game shows a small
-        // broken ring with a dot at its centre and NOTHING else -- no coloured
-        // ring, no type symbol -- which reads as a fitting with no socket in it
-        // rather than as a socket that happens to be empty. Drawn small and
-        // centred, at the game's own grey.
+        // A locked socket is a thick ring with a slit cut through it at top and
+        // bottom and a dot at its centre, and NOTHING else -- no coloured ring,
+        // no type symbol -- which reads as a fitting with no socket in it
+        // rather than as a socket that happens to be empty.
+        //
+        // The game's own sprite; see DsGameArt.LockedSocketSymbol for how it was
+        // found, since no field holds it. Until the atlas answers, the socket
+        // draws nothing and the lookup retries -- the same as every other piece
+        // of borrowed art here.
         if (locked)
         {
             var glyph = DsGameArt.LockedSocketSymbol();
             var mark = DsWidgets.Icon(holder, "locked", glyph, LockedGrey);
             mark.preserveAspect = true;
-            if (glyph != null) DsWidgets.FitCentred(mark, glyph, size * 0.5f, size * 0.5f);
-            else DsWidgets.Stretch(mark.rectTransform, size * 0.30f);
+            if (glyph != null)
+                DsWidgets.FitInk(mark, glyph, size * LockedSymbol, size * LockedSymbol);
             mark.color = LockedGrey;
 
             _slots.Add(mark);
@@ -440,29 +444,49 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
             return;
         }
 
+        Sprite held = null;
+        try { held = tool != null ? tool.InventorySpriteBase : null; } catch { }
+
+        // An EMPTY socket is its symbol and nothing else. The ring exists to
+        // hold something and to say what may go in it; with nothing in it the
+        // symbol already says the second part, in the type's own colour, and a
+        // circle drawn around it reads as a socket that is somehow filled with
+        // emptiness. Larger, too, because it is now the whole of what is there
+        // rather than a mark inside a frame.
+        if (held == null)
+        {
+            var symbol = DsGameArt.CrestSlotSymbol(type);
+            var mark = DsWidgets.Icon(holder, "symbol", symbol, ringColour);
+            mark.preserveAspect = true;
+            if (symbol != null)
+                DsWidgets.FitInk(mark, symbol, size * EmptySymbol, size * EmptySymbol);
+            else
+                DsWidgets.Stretch(mark.rectTransform, size * (1f - EmptySymbol) * 0.5f);
+            mark.color = ringColour;
+
+            _slots.Add(mark);
+            _slotTools.Add(null);
+            _slotRects.Add(holder);
+            _slotLocked.Add(false);
+            _slotIndex.Add(index);
+            _slotColour.Add(ringColour);
+            return;
+        }
+
         // Round, because the game's slots are round and a square frame around a
         // round icon reads as a different kind of thing. The ring's colour says
-        // what may go in the slot, which is useful even when it is empty.
+        // what is in the slot.
         var ring = DsWidgets.Circle(holder, "ring", ringColour);
         DsWidgets.Stretch(ring.rectTransform);
         var inner = DsWidgets.Circle(ring.rectTransform, "inner", DsTheme.Panel);
         DsWidgets.Stretch(inner.rectTransform, 5f);
 
-        Sprite icon = null;
-        try { icon = tool != null ? tool.InventorySpriteBase : null; } catch { }
-
-        float inset = size * 0.17f;
-        Color tint = Color.white;
-        if (icon == null)
-        {
-            icon = DsGameArt.CrestSlotSymbol(type);
-            tint = ringColour;
-            inset += size * 0.04f;
-        }
-
-        var img = DsWidgets.Icon(inner.rectTransform, "icon", icon, tint);
-        // Inset enough that a square-ish icon stays inside the circle.
-        DsWidgets.Stretch(img.rectTransform, inset);
+        var img = DsWidgets.Icon(inner.rectTransform, "icon", held, Color.white);
+        // Sized by the tool art's INK rather than by its rect, for the same
+        // reason the symbols are: these sprites carry their own padding, and
+        // insetting the rect left the drawing adrift in the middle of the ring.
+        DsWidgets.FitInk(img, held, size * FilledInk, size * FilledInk);
+        img.color = Color.white;
 
         _slots.Add(img);
         _slotTools.Add(tool);
@@ -471,6 +495,29 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         _slotIndex.Add(index);
         _slotColour.Add(ringColour);
     }
+
+    /// <summary>
+    /// How large each kind of art is drawn, as a multiple of the socket.
+    ///
+    /// These are ABOVE one, and that is not a mistake. The slot glyphs are
+    /// 181x181 sprites whose drawing occupies roughly a third of that, with the
+    /// rest transparent -- and the padding is baked into the TEXTURE, so it is
+    /// invisible to Sprite.bounds and no fitting rule can measure it away.
+    /// Asking for four-fifths of a socket therefore drew about a quarter of
+    /// one, and raising the fraction toward 1 could never have been enough.
+    /// The sprite's rect is simply drawn larger than the socket so that the ink
+    /// inside it comes out the right size.
+    /// A filled socket is the exception and is a fraction rather than a
+    /// multiple: a tool's own inventory art is drawn close to its edges, so it
+    /// needs no allowance for padding. It sits just inside the ring's inner
+    /// edge -- close enough to fill it, short of touching it.
+    /// The locked mark is a multiple for the same reason the symbols are: its
+    /// sprite is 151x151 with a drawing about forty pixels across sitting in
+    /// the middle of it.
+    /// </summary>
+    const float FilledInk    = 0.94f;
+    const float EmptySymbol  = 1.85f;
+    const float LockedSymbol = 1.24f;
 
     /// <summary>The colour the cursor takes on a given drawn slot.</summary>
     Color SlotColour(int drawn)
@@ -654,10 +701,12 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                 {
                     _lockedPick = i;
                     _socketTool = null;
-                    // Nothing in the list is chosen while a socket is, and the
-                    // description says what the slot is rather than naming a
-                    // tool that is not there.
-                    _grid.ShowDetail(LockedSlotName, LockedSlotDesc());
+                    // Nothing to say about it. The game says nothing either --
+                    // a locked socket has no description, and the UNLOCK button
+                    // appearing beside it is what tells you what it is and
+                    // whether you can afford it. Prose invented to fill the
+                    // pane would be this panel talking about itself.
+                    _grid.ShowDetail(string.Empty, string.Empty);
                     _grid.SetExternalTarget(where, LockedGrey, "locked:" + i);
                     return;
                 }
@@ -950,34 +999,6 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     }
 
     // ── unlocking a socket ──────────────────────────────────────────────────
-
-    const string LockedSlotName = "Locked Socket";
-
-    /// <summary>
-    /// What the description pane says about a locked socket, including how many
-    /// of the unlock item are left -- which is the thing you actually want to
-    /// know before spending one.
-    /// </summary>
-    string LockedSlotDesc()
-    {
-        var item = DsGameArt.SlotUnlockItem();
-        int have = 0;
-        string name = "Memory Locket";
-        if (item != null)
-        {
-            try { have = item.CollectedAmount; } catch { }
-            try
-            {
-                string display = item.GetDisplayName(CollectableItem.ReadSource.Inventory);
-                if (!string.IsNullOrWhiteSpace(display)) name = display;
-            }
-            catch { }
-        }
-
-        return have > 0
-            ? "This socket can be opened with a " + name + ".\n\nYou have " + have + "."
-            : "This socket needs a " + name + " to open.\n\nYou have none.";
-    }
 
     /// <summary>
     /// Whether a socket can be opened right now, which is the game's own test:

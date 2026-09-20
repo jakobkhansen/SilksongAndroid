@@ -327,7 +327,7 @@ public class DsInventoryScreen : DsGridScreen, IDsActionBar
             string title = item.name, desc = "";
             try { icon = item.GetIcon(CollectableItem.ReadSource.Inventory); } catch { }
             try { title = item.GetDisplayName(CollectableItem.ReadSource.Inventory); } catch { }
-            try { desc = item.GetDescription(CollectableItem.ReadSource.Inventory); } catch { }
+            desc = FullDescription(item);
 
             bool consumable = false;
             try { consumable = item.IsConsumable(); } catch { }
@@ -373,6 +373,82 @@ public class DsInventoryScreen : DsGridScreen, IDsActionBar
         // prompt greyed (forceDisabled) instead of removing it.
         into.Add(new DsAction("USE", now ? (Action)(() => Consume(item)) : null, !now,
                               DsActionPlace.Pane));
+    }
+
+    /// <summary>
+    /// An item's description, with everything the game appends to it.
+    ///
+    /// GetDescription alone is only the first paragraph. InventoryItemCollectable.
+    /// Description adds three more things, and dropping them cost the panel real
+    /// information: a Frayed Rosary Ring said what it was and not that it
+    /// CONTAINS 30 ROSARIES, which is the only part you open the inventory to
+    /// check.
+    ///
+    /// The three, in the game's own order, each separated by a blank line:
+    ///
+    ///   * every ACTIVE quest that wants this item, via its InvItemAppendDesc --
+    ///     "Wanted by the Flea Caravan", and the reason not to sell the thing.
+    ///   * a standalone delivery quest's own note, for an item that IS the
+    ///     delivery.
+    ///   * the use responses: "Contains 30 Rosaries", "Restores 2 masks". These
+    ///     come from GetUseResponseDescriptions, which formats each response's
+    ///     text with its own amount, so the number is the item's rather than a
+    ///     count we worked out.
+    ///
+    /// Each piece is guarded on its own. A quest list that throws should not
+    /// cost the item its description, and an item with no use responses is the
+    /// ordinary case rather than a failure.
+    /// </summary>
+    static string FullDescription(CollectableItem item)
+    {
+        string desc = "";
+        try { desc = item.GetDescription(CollectableItem.ReadSource.Inventory); } catch { }
+
+        var sb = new System.Text.StringBuilder(desc ?? "");
+
+        try
+        {
+            // GetActiveQuests is the game's own source here, and it is the
+            // accepted-and-unfinished set rather than the master list -- an
+            // item wanted by a quest you have not taken is not yet worth
+            // saying anything about.
+            foreach (var quest in QuestManager.GetActiveQuests())
+            {
+                if (quest == null || quest.InvItemAppendDesc.IsEmpty) continue;
+                foreach (var target in quest.Targets)
+                {
+                    if (target.Counter != item) continue;
+                    Append(sb, quest.InvItemAppendDesc);
+                    break;
+                }
+            }
+        }
+        catch (Exception e) { Debug.LogWarning("[DualScreen] quest notes: " + e.Message); }
+
+        try
+        {
+            var delivery = item as DeliveryQuestItemStandalone;
+            if (delivery != null && !delivery.InvItemAppendDesc.IsEmpty)
+                Append(sb, delivery.InvItemAppendDesc);
+        }
+        catch { }
+
+        try
+        {
+            var responses = item.GetUseResponseDescriptions();
+            if (responses != null)
+                for (int i = 0; i < responses.Length; i++) Append(sb, responses[i]);
+        }
+        catch (Exception e) { Debug.LogWarning("[DualScreen] use responses: " + e.Message); }
+
+        return sb.ToString();
+    }
+
+    static void Append(System.Text.StringBuilder sb, string line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+        if (sb.Length > 0) sb.Append("\n\n");
+        sb.Append(line.Trim());
     }
 
     CollectableItem SelectedCollectable()

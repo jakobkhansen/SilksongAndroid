@@ -280,6 +280,62 @@ public static class DsWidgets
         rt.anchoredPosition = new Vector2(-frac.x * w, -frac.y * h);
     }
 
+    /// <summary>
+    /// Set an icon's sprite and size it so the sprite's VISIBLE INK fills
+    /// maxW x maxH, rather than its rectangle.
+    ///
+    /// The difference is the whole point. The game's slot symbols are 181x181
+    /// sprites with a small glyph adrift in a sea of transparency; fitted by
+    /// their RECT -- which is what FitCentred does -- a symbol asked to fill
+    /// four-fifths of a socket drew at about a quarter of it, and no amount of
+    /// raising the fraction fixed it because the padding scaled with the glyph.
+    ///
+    /// Sprite.bounds is the trimmed mesh, so the ratio of it to the full rect
+    /// says how much of the sprite is ink. Sizing by that makes the request
+    /// mean what it says: "this much of the socket, filled".
+    /// </summary>
+    public static void FitInk(Image img, Sprite sprite, float maxW, float maxH)
+    {
+        if (img == null || sprite == null) return;
+
+        float ppu = sprite.pixelsPerUnit;
+        if (ppu <= 0f) ppu = 100f;
+
+        var full = sprite.rect;
+        float inkW = sprite.bounds.size.x * ppu;
+        float inkH = sprite.bounds.size.y * ppu;
+
+        // A sprite with no trim, or one we cannot measure, is its own rect.
+        if (inkW <= 0.01f || inkH <= 0.01f || full.width <= 0f || full.height <= 0f)
+        {
+            FitCentred(img, sprite, maxW, maxH);
+            return;
+        }
+
+        img.sprite = sprite;
+        img.color = Color.white;
+
+        float scale = Mathf.Min(maxW / inkW, maxH / inkH);
+        float w = full.width * scale;
+        float h = full.height * scale;
+
+        var rt = img.rectTransform;
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = new Vector2(w, h);
+
+        // The ink's centre, as a fraction of the full rect -- the same
+        // correction FitCentred makes, for the same reason: a trimmed mesh is
+        // not centred in the rect it was trimmed from.
+        Vector2 unitsFull = new Vector2(full.width / ppu, full.height / ppu);
+        Vector3 c = sprite.bounds.center;
+        Vector2 frac = new Vector2(
+            unitsFull.x > 0f ? c.x / unitsFull.x : 0f,
+            unitsFull.y > 0f ? c.y / unitsFull.y : 0f);
+
+        rt.anchoredPosition = new Vector2(-frac.x * w, -frac.y * h);
+    }
+
     public static void Stretch(RectTransform rt, float pad = 0f)
     {
         rt.anchorMin = Vector2.zero;

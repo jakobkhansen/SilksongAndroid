@@ -285,9 +285,16 @@ public static class DsGameArt
                 if (slot == null) continue;
                 var sprite = field.GetValue(slot) as Sprite;
                 if (sprite == null) continue;
-                int key = (int)slot.Type;
+
+                int key = SlotTypeOf(slot);
+                if (key < 0) continue;
                 if (!_slotSymbols.ContainsKey(key) || _slotSymbols[key] == null)
+                {
                     _slotSymbols[key] = sprite;
+                    Debug.Log("[DsGameArt] crest slot symbol " + (ToolItemType)key + ": " +
+                              sprite.name + " from '" + slot.name + "' (slotInfo says " +
+                              SafeType(slot) + ")");
+                }
             }
             if (_slotSymbols.Count > 0) _slotSymbolsSearched = true;
         }
@@ -299,6 +306,40 @@ public static class DsGameArt
 
         _slotSymbols.TryGetValue((int)type, out found);
         return found;
+    }
+
+    /// <summary>
+    /// Which type a slot object's symbol belongs to, by its NAME.
+    ///
+    /// Not by slot.Type, which is the obvious answer and is wrong here.
+    /// That reads `slotInfo`, a serialized field the pane fills in when it
+    /// binds a slot to the crest being shown -- so every slot object that has
+    /// not been bound, and FindObjectsOfTypeAll returns plenty of those,
+    /// reports the enum's default of Red. The first such slot claimed Red with
+    /// whatever glyph it happened to carry, and three of the crest's sockets
+    /// drew the blue "()" because a Defend Slot got there first.
+    ///
+    /// The names are stable and say what the prefabs are: the locked socket
+    /// this was first noticed on is 'Defend Slot(Clone)'. Anything unrecognised
+    /// is skipped rather than guessed at -- a missing symbol is a slot drawn
+    /// bare, which is honest; a wrong one is a lie about what fits there.
+    /// </summary>
+    static int SlotTypeOf(InventoryToolCrestSlot slot)
+    {
+        string n = slot.name;
+        if (string.IsNullOrEmpty(n)) return -1;
+        n = n.ToLowerInvariant();
+        if (n.Contains("attack")) return (int)ToolItemType.Red;
+        if (n.Contains("defend") || n.Contains("defence") || n.Contains("defense"))
+            return (int)ToolItemType.Blue;
+        if (n.Contains("explore")) return (int)ToolItemType.Yellow;
+        if (n.Contains("skill") || n.Contains("neutral")) return (int)ToolItemType.Skill;
+        return -1;
+    }
+
+    static string SafeType(InventoryToolCrestSlot slot)
+    {
+        try { return slot.Type.ToString(); } catch { return "?"; }
     }
 
     // ── the quest list's divider ────────────────────────────────────────────
@@ -714,31 +755,31 @@ public static class DsGameArt
         return found;
     }
 
+
     static Sprite _lockedSocket;
     static float _nextLockedSearch;
 
     /// <summary>
-    /// The little notch the game draws where a socket has not been opened yet.
+    /// The mark the game shows where a socket has not been opened yet: a thick
+    /// ring with a narrow slit cut through it at top and bottom, and a filled
+    /// dot at its centre.
     ///
-    /// A locked socket is NOT a slot with a grey symbol in it: the game shows a
-    /// small glyph and nothing else -- no ring, no tool -- which reads as a
-    /// fitting with no socket rather than as a socket that is empty.
+    /// The game's own sprite, by name, like every other piece of art here.
     ///
-    /// The glyph is the slot's own `slotTypeSprite`, which is exactly what
-    /// InventoryToolCrestSlot.Sprite returns when nothing is equipped:
+    /// Finding the name was the whole difficulty. It is NOT reachable through a
+    /// field -- PlaySlotStateAnims plays `_lockedAnim` on the slot's animator
+    /// and the clip swaps the renderer's sprite -- and it is not called what
+    /// the rest of the family is called: every other slot glyph is
+    /// `UI_tool_slot_*`, so a dump filtered on `UI_` missed it entirely and
+    /// several plausible neighbours were tried and rejected on screen.
+    /// `UI_tool_slot_locked_fill` is the bare ring with no dot;
+    /// `UI_tool_slot_lock_glows_inner*` have the right shape but are the soft
+    /// glow layers. It was pinned down in the end by dumping the whole Inventory
+    /// atlas page (`sprite_dump`, see DsProbe), spotting the sharp glyph on it,
+    /// and matching a sprite whose rect covered that point.
     ///
-    ///     public override Sprite Sprite
-    ///         => !EquippedItem ? slotTypeSprite : EquippedItem.InventorySpriteBase;
-    ///
-    /// Read from a slot that is actually LOCKED rather than from any slot of
-    /// the same type, so that whatever that socket would show is what we show.
-    ///
-    /// Worth recording what this is NOT, because both were tried: the slot's
-    /// `slotTypeIcon` renderer holds UI_tool_slot_attack0004 at 181x181, which
-    /// is the slot's RING -- using it drew a plain circle. Nor is the glyph a
-    /// renderer anywhere under the slot; a dump of a locked one showed only
-    /// Background, Background_Filled, Item Icon, Shadow and White Flash, every
-    /// one of them inactive while the game's pane is closed.
+    /// `locked_sprite=<name>` overrides it, which is how a candidate can be
+    /// tried for the cost of an app restart rather than a ten-minute rebuild.
     /// </summary>
     public static Sprite LockedSocketSymbol()
     {
@@ -746,28 +787,19 @@ public static class DsGameArt
         if (Time.unscaledTime < _nextLockedSearch) return null;
         _nextLockedSearch = Time.unscaledTime + 2f;
 
+        string want = DsConfig.Str("locked_sprite", LockedSocketSprite);
+        if (string.IsNullOrEmpty(want)) return null;
+
         try
         {
-            var field = typeof(InventoryToolCrestSlot).GetField("slotTypeSprite", Priv);
-            if (field == null) return null;
-
-            var slots = Resources.FindObjectsOfTypeAll<InventoryToolCrestSlot>();
-            for (int i = 0; i < slots.Length && _lockedSocket == null; i++)
+            var all = Resources.FindObjectsOfTypeAll<Sprite>();
+            for (int i = 0; i < all.Length; i++)
             {
-                var slot = slots[i];
-                if (slot == null) continue;
-
-                bool locked = false;
-                try { locked = slot.IsLocked; } catch { }
-                if (!locked) continue;
-
-                var sprite = field.GetValue(slot) as Sprite;
-                if (sprite == null) continue;
-
-                _lockedSocket = sprite;
-                Debug.Log("[DsGameArt] locked socket glyph: " + sprite.name +
-                          " " + sprite.rect.width + "x" + sprite.rect.height +
-                          " from " + slot.name + " (" + slot.Type + ")");
+                if (all[i] == null || all[i].name != want) continue;
+                _lockedSocket = all[i];
+                Debug.Log("[DsGameArt] locked socket glyph: '" + want + "' " +
+                          all[i].rect.width + "x" + all[i].rect.height);
+                break;
             }
         }
         catch (System.Exception e)
@@ -777,8 +809,10 @@ public static class DsGameArt
         return _lockedSocket;
     }
 
-    /// <summary>
-    /// The item a locked crest socket is opened with -- the Memory Locket.
+    /// <summary>The sprite the locked mark is taken from, unless overridden.</summary>
+    const string LockedSocketSprite = "Tool_slot_lock_ring";
+
+
     ///
     /// Asked of the game rather than looked up by name: it is a serialised
     /// field on the tool pane (`slotUnlockItem`), so whatever the game spends

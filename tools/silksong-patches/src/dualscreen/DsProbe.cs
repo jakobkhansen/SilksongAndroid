@@ -247,6 +247,202 @@ public static class DsProbe
         catch (System.Exception e) { Debug.LogWarning("[DsProbe] failed: " + e); }
     }
 
+    static bool _spritesDumped;
+
+    /// <summary>
+    /// Write the game's own sprites out as PNGs, so a person can LOOK at one.
+    ///
+    /// Set `sprite_dump=<substring>` in the dualscreen_v2 file and every loaded
+    /// sprite whose name contains it lands in the external files directory as
+    /// `sprites/<name>.png`. `sprite_dump=1` takes everything, which is a great
+    /// many files and occasionally what you want.
+    ///
+    /// This exists because the decompile is not enough. Half the art this panel
+    /// borrows is referenced by the placeholder GUID `0000000deadbeef15dead...`
+    /// and has no PNG on disk at all, so the only way to answer "is THAT the
+    /// right glyph" is to take it off the running game. Several rounds have
+    /// been lost to reasoning about sprites from their names.
+    ///
+    /// Atlas pages are not CPU-readable, so the texture cannot simply be asked
+    /// for its pixels. It is blitted into a RenderTexture first, which the GPU
+    /// will do for any texture, and read back from there -- and only the
+    /// sprite's own rect within the page, or every dump would be the whole
+    /// atlas.
+    /// </summary>
+    public static void MaybeDumpSprites()
+    {
+        if (_spritesDumped) return;
+        string want = DsConfig.Str("sprite_dump", null);
+        if (string.IsNullOrEmpty(want)) return;
+        if (!DsGameData.InGame) return;
+        _spritesDumped = true;
+
+        try
+        {
+            string dir = System.IO.Path.Combine(Application.persistentDataPath, "sprites");
+            System.IO.Directory.CreateDirectory(dir);
+
+            bool all = want == "1";
+            var seen = new System.Collections.Generic.HashSet<string>();
+            var sprites = Resources.FindObjectsOfTypeAll<Sprite>();
+
+            // Gathered per page, because a page is decoded once and every
+            // sprite on it is then cut from the copy.
+            var byPage = new System.Collections.Generic.Dictionary<Texture, System.Collections.Generic.List<Sprite>>();
+            int listed = 0;
+            for (int i = 0; i < sprites.Length; i++)
+            {
+                var s = sprites[i];
+                if (s == null || s.texture == null) continue;
+                if (!seen.Add(s.name)) continue;
+
+                // EVERY sprite is listed; only matches are written out.
+                //
+                // Listing is a log line and writing is two PNGs, and the
+                // difference is not small: `sprite_dump=1` used to write files
+                // for everything, which locked the device hard enough to need
+                // adb to recover it. A name and a rect is all that is wanted
+                // nine times in ten -- it is what turns a glyph spotted on a
+                // dumped atlas page back into something askable-for -- so the
+                // cheap half now runs for everything and the expensive half
+                // stays behind the filter.
+                var lr = s.textureRect.width > 0f ? s.textureRect : s.rect;
+                Debug.Log("[DsProbe] sprite " + s.name +
+                          " rect " + Mathf.RoundToInt(lr.x) + "," + Mathf.RoundToInt(lr.y) +
+                          " " + Mathf.RoundToInt(lr.width) + "x" + Mathf.RoundToInt(lr.height) +
+                          " page " + s.texture.name + " " + s.texture.width + "x" + s.texture.height);
+                listed++;
+
+                if (!all && s.name.IndexOf(want, System.StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                System.Collections.Generic.List<Sprite> list;
+                if (!byPage.TryGetValue(s.texture, out list))
+                    byPage[s.texture] = list = new System.Collections.Generic.List<Sprite>();
+                list.Add(s);
+            }
+
+            // `sprite_dump=1` means "list everything", not "write everything".
+            int written = 0;
+            if (!all)
+            {
+                foreach (var pair in byPage)
+                    written += DumpPage(pair.Key, pair.Value, dir);
+            }
+
+            Debug.Log("[DsProbe] sprite_dump '" + want + "': listed " + listed +
+                      " sprite(s), wrote " + written + " from " + byPage.Count + " page(s) to " + dir);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DsProbe] sprite dump failed: " + e);
+        }
+    }
+
+    /// <summary>
+    /// Decode one atlas page, write it out, and cut every wanted sprite from
+    /// the decoded copy.
+    ///
+    /// Decoding the page is the only reliable step here. Atlas pages are
+    /// BC7-compressed and not CPU-readable, and neither obvious shortcut works
+    /// on them: CopyTexture cannot write BC7 blocks into an RGBA32 target and
+    /// silently yields nothing (a whole dump of forty-four sprites came back
+    /// blank), while Blit-then-crop draws through a shader that arrives
+    /// vertically flipped on Vulkan, so each crop landed on a neighbour. A
+    /// full-page Blit has neither problem -- there is no rect to get wrong --
+    /// so the page is read back once and the sprites are cut on the CPU.
+    ///
+    /// Each sprite is cut BOTH ways up and written as `name.png` and
+    /// `name.flip.png`, because whether the readback flipped is a property of
+    /// the driver and not worth another build to find out: one of the two is
+    /// right, and which one is obvious at a glance.
+    /// </summary>
+    static int DumpPage(Texture tex, System.Collections.Generic.List<Sprite> list, string dir)
+    {
+        RenderTexture rt = null;
+        RenderTexture previous = RenderTexture.active;
+        Texture2D page = null;
+        int written = 0;
+        try
+        {
+            int pw = tex.width, ph = tex.height;
+            rt = RenderTexture.GetTemporary(pw, ph, 0, RenderTextureFormat.ARGB32);
+            Graphics.Blit(tex, rt);
+            RenderTexture.active = rt;
+            page = new Texture2D(pw, ph, TextureFormat.RGBA32, false);
+            page.ReadPixels(new UnityEngine.Rect(0, 0, pw, ph), 0, 0);
+            page.Apply();
+
+            System.IO.File.WriteAllBytes(
+                System.IO.Path.Combine(dir, "_page_" + Safe(tex.name) + ".png"), page.EncodeToPNG());
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                var s = list[i];
+                var r = s.textureRect.width > 0f ? s.textureRect : s.rect;
+                int x = Mathf.Clamp(Mathf.RoundToInt(r.x), 0, pw - 1);
+                int y = Mathf.Clamp(Mathf.RoundToInt(r.y), 0, ph - 1);
+                int w = Mathf.Clamp(Mathf.RoundToInt(r.width), 1, pw - x);
+                int h = Mathf.Clamp(Mathf.RoundToInt(r.height), 1, ph - y);
+
+                // The rect is logged so a glyph picked out of the page by eye
+                // can be turned back into a sprite NAME, which is the only
+                // durable way to ask for it later.
+                Debug.Log("[DsProbe] sprite " + s.name + " rect " + x + "," + y +
+                          " " + w + "x" + h + " page " + tex.name + " " + pw + "x" + ph);
+
+                string safe = Safe(s.name);
+                if (Cut(page, x, y, w, h, System.IO.Path.Combine(dir, safe + ".png"))) written++;
+                Cut(page, x, ph - y - h, w, h, System.IO.Path.Combine(dir, safe + ".flip.png"));
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DsProbe] could not dump page " + tex.name + ": " + e.Message);
+        }
+        finally
+        {
+            RenderTexture.active = previous;
+            if (rt != null) RenderTexture.ReleaseTemporary(rt);
+            if (page != null) UnityEngine.Object.Destroy(page);
+        }
+        return written;
+    }
+
+    static bool Cut(Texture2D page, int x, int y, int w, int h, string path)
+    {
+        Texture2D cut = null;
+        try
+        {
+            if (x < 0 || y < 0 || x + w > page.width || y + h > page.height) return false;
+            cut = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            cut.SetPixels(page.GetPixels(x, y, w, h));
+            cut.Apply();
+            System.IO.File.WriteAllBytes(path, cut.EncodeToPNG());
+            return true;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DsProbe] could not cut " + path + ": " + e.Message);
+            return false;
+        }
+        finally
+        {
+            if (cut != null) UnityEngine.Object.Destroy(cut);
+        }
+    }
+
+    static string Safe(string name)
+    {
+        var sb = new System.Text.StringBuilder(name.Length);
+        for (int i = 0; i < name.Length; i++)
+        {
+            char c = name[i];
+            sb.Append(char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.' ? c : '_');
+        }
+        return sb.ToString();
+    }
+
     static void Dump()
     {
         var pane = FindInventoryRoot();
