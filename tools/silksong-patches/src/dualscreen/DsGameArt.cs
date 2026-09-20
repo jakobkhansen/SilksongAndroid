@@ -93,6 +93,9 @@ public static class DsGameArt
         _toolDividers.Clear(); _nextDividerSearch = 0f;
         _unlockItem = null; _nextUnlockSearch = 0f;
         _lockedSocket = null; _nextLockedSearch = 0f;
+        _journalFrames = default(JournalFrames);
+        _journalRule = default(JournalRule);
+        _journalLocked = null; _nextJournalSearch = 0f;
         if (_silhouette != null) { UnityEngine.Object.Destroy(_silhouette); _silhouette = null; }
     }
 
@@ -806,6 +809,159 @@ public static class DsGameArt
 
     static CollectableItem _unlockItem;
     static float _nextUnlockSearch;
+
+    // ── the journal ─────────────────────────────────────────────────────────
+
+    /// <summary>The two rings the journal draws around a creature's portrait.</summary>
+    public struct JournalFrames
+    {
+        /// <summary>Seen, but the notes are not finished.</summary>
+        public Sprite Standard;
+        /// <summary>Killed enough of them for the hunter's own commentary.</summary>
+        public Sprite Complete;
+        public bool Ok { get { return Standard != null || Complete != null; } }
+    }
+
+    /// <summary>The mask the journal sets between a description and its notes.</summary>
+    public struct JournalRule
+    {
+        public Sprite Symbol;
+        public bool Ok { get { return Symbol != null; } }
+    }
+
+    static JournalFrames _journalFrames;
+    static JournalRule _journalRule;
+    static string _journalLocked;
+    static float _nextJournalSearch;
+
+    /// <summary>
+    /// The journal's two rings.
+    ///
+    /// Which one a creature gets is JournalEntryItem.Setup's own rule --
+    /// `record.KillCount >= record.KillsRequired` -- and the two are different
+    /// pieces of art rather than one tinted twice: the complete ring carries
+    /// flourishes the standard one does not, which is the whole of how the
+    /// grid tells you at a glance which notes are finished.
+    ///
+    /// They are GameObjects on the item (`standardFrame` and `completeFrame`),
+    /// switched on and off, so both are read whatever the one live item
+    /// happens to be showing.
+    /// </summary>
+    public static JournalFrames Frames()
+    {
+        if (_journalFrames.Ok) return _journalFrames;
+        SearchJournal();
+        return _journalFrames;
+    }
+
+    /// <summary>The hunter's mask, set between a description and her notes.</summary>
+    public static JournalRule Rule()
+    {
+        if (_journalRule.Ok) return _journalRule;
+        SearchJournal();
+        return _journalRule;
+    }
+
+    /// <summary>
+    /// The game's own "defeat N more" line, with its {0} still in it.
+    ///
+    /// Taken from JournalItemManager.notesLockedText rather than written here,
+    /// so it arrives in the player's language and in the game's words --
+    /// `string.Format(notesLockedText, killsRequired - killCount)` is exactly
+    /// what the game does with it.
+    /// </summary>
+    public static string JournalNotesLocked()
+    {
+        if (!string.IsNullOrEmpty(_journalLocked)) return _journalLocked;
+        SearchJournal();
+        return _journalLocked;
+    }
+
+    static void SearchJournal()
+    {
+        if (Time.unscaledTime < _nextJournalSearch) return;
+        _nextJournalSearch = Time.unscaledTime + 2f;
+
+        try
+        {
+            if (!_journalFrames.Ok)
+            {
+                var entries = Resources.FindObjectsOfTypeAll<JournalEntryItem>();
+                for (int i = 0; i < entries.Length && !_journalFrames.Ok; i++)
+                {
+                    if (entries[i] == null) continue;
+                    _journalFrames.Standard = FrameSprite(entries[i], "standardFrame");
+                    _journalFrames.Complete = FrameSprite(entries[i], "completeFrame");
+                }
+            }
+
+            var managers = Resources.FindObjectsOfTypeAll<JournalItemManager>();
+            for (int i = 0; i < managers.Length; i++)
+            {
+                var mgr = managers[i];
+                if (mgr == null) continue;
+
+                if (string.IsNullOrEmpty(_journalLocked))
+                {
+                    var f = typeof(JournalItemManager).GetField("notesLockedText", Priv);
+                    if (f != null)
+                    {
+                        object ls = f.GetValue(mgr);
+                        if (ls != null)
+                        {
+                            string s = ls.ToString();
+                            // An unresolved key comes back as !!Sheet/KEY!! --
+                            // see DsTasksScreen. Not worth showing.
+                            if (!string.IsNullOrWhiteSpace(s) &&
+                                !(s.StartsWith("!!") && s.EndsWith("!!")))
+                                _journalLocked = s;
+                        }
+                    }
+                }
+
+                // The mask is static scenery on the pane rather than a field on
+                // anything, so it is found by name under the manager's root.
+                var root = mgr.transform;
+                while (root.parent != null) root = root.parent;
+
+                if (!_journalRule.Ok) _journalRule.Symbol = NamedSprite(root, "hunter_symbol");
+
+                if (_journalRule.Ok && !string.IsNullOrEmpty(_journalLocked)) break;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DualScreen] journal art unavailable: " + e.Message);
+        }
+    }
+
+    static Sprite FrameSprite(JournalEntryItem item, string field)
+    {
+        try
+        {
+            var f = typeof(JournalEntryItem).GetField(field, Priv);
+            var go = f != null ? f.GetValue(item) as GameObject : null;
+            if (go == null) return null;
+            var sr = go.GetComponent<SpriteRenderer>()
+                  ?? go.GetComponentInChildren<SpriteRenderer>(true);
+            return sr != null ? sr.sprite : null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>The sprite on the first descendant with this exact name.</summary>
+    static Sprite NamedSprite(Transform root, string name)
+    {
+        try
+        {
+            var all = root.GetComponentsInChildren<SpriteRenderer>(true);
+            for (int i = 0; i < all.Length; i++)
+                if (all[i] != null && all[i].sprite != null && all[i].name == name)
+                    return all[i].sprite;
+        }
+        catch { }
+        return null;
+    }
 
     // ── map markers ─────────────────────────────────────────────────────────
 

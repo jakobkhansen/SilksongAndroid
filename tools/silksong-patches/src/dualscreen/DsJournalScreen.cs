@@ -40,6 +40,12 @@ public class DsJournalScreen : IDsScreen
         public bool Unseen;
         /// <summary>Listed by Farsight but never met: a silhouette, not a name.</summary>
         public bool Unknown;
+        /// <summary>
+        /// Killed enough of them for the hunter's commentary, which is the
+        /// game's own test -- JournalEntryItem.Setup picks its ring on
+        /// `record.KillCount >= record.KillsRequired` and nothing else.
+        /// </summary>
+        public bool Complete;
     }
 
     class Cell
@@ -53,7 +59,21 @@ public class DsJournalScreen : IDsScreen
     const float ListX = 20f;
     const float ListW = 380f;
     const int   Columns = 3;
-    const float CellGap = 14f;
+    // Roomier than it was. The portraits now sit inside the game's own ring
+    // rather than filling a bare disc, so they read as framed pictures with air
+    // around them instead of as a wall of circles that happen to touch.
+    const float CellGap = 26f;
+    /// <summary>
+    /// How far the portrait sits inside its ring, as a fraction of the cell.
+    ///
+    /// A fraction rather than a pixel count because the ring is the game's art
+    /// and carries its own transparent margin: drawn across a 109-pixel cell
+    /// its circle is only about 84 across, and its INNER edge about 71. A flat
+    /// nine pixels left the portrait a little wider than that inner edge, so
+    /// creatures with wide heads spilled over the frame that was supposed to
+    /// contain them.
+    /// </summary>
+    const float ArtInsetFraction = 0.16f;
     // How far the clip extends past the list on each side, so a bracket on an
     // outer cell is drawn rather than shaved. See the clip in Build.
     const float CursorBleed = 6f;
@@ -80,12 +100,28 @@ public class DsJournalScreen : IDsScreen
     readonly DsCursor _cursor = new DsCursor();
 
     RectTransform _host, _list, _portraitBox, _detail;
-    Image _portrait;
-    TmpText _name, _desc, _empty;
+    /// <summary>The rule between the description and the hunter's notes.</summary>
+    RectTransform _ruleRoot;
+    Image _portrait, _glow;
+    TmpText _name, _desc, _notes, _empty;
 
     Rect _listRect;
     float _cell, _cellH, _listTop, _listH;
     float _portraitW, _portraitH;
+    float _detailW;
+    string _ruleSig;
+    /// <summary>Frames left to re-lay the description. See Tick.</summary>
+    int _settle;
+    /// <summary>Where the description's prose starts, under the creature's name.</summary>
+    const float DetailTextTop = 68f;
+    /// <summary>The rule's own band, and the air either side of it.</summary>
+    const float RuleH = 52f;
+    const float RuleGap = 18f;
+    /// <summary>The fallback hairline's width, for before the mask is readable.</summary>
+    const float RuleReach = 150f;
+    const float RuleSymbolH = 44f;
+    /// <summary>The least room the notes are given under the rule.</summary>
+    const float MinNotesH = 90f;
     float _scroll, _maxScroll;
     int _selected = -1;
     string _selectedKey, _signature;
@@ -143,6 +179,19 @@ public class DsJournalScreen : IDsScreen
         _portraitBox = DsWidgets.Rect(host, "portrait");
         DsWidgets.Place(_portraitBox, PortraitX, _listTop, PortraitW, colH);
 
+        // The soft light the creature stands on, behind it and centred in the
+        // column. The game puts one there and without it the portrait floats in
+        // a black field -- it is what makes the centre column read as a lit
+        // plate rather than as a hole with a picture in it.
+        //
+        // Built before the portrait so it draws behind, and sized generously:
+        // it is a wide radial falloff, not a disc with an edge.
+        _glow = DsWidgets.Icon(_portraitBox, "glow", null, Color.white);
+        _glow.preserveAspect = true;
+        float glowSize = Mathf.Min(PortraitW, colH) * 1.25f;
+        DsWidgets.Place(_glow.rectTransform, (PortraitW - glowSize) * 0.5f,
+                        (colH - glowSize) * 0.5f, glowSize, glowSize);
+
         _portrait = DsWidgets.Icon(_portraitBox, "art", null, Color.white);
         _portraitW = PortraitW - 48f;
         _portraitH = colH - 48f;
@@ -152,6 +201,7 @@ public class DsJournalScreen : IDsScreen
         // now, and the gutter rule beside it is already the boundary.
         _detail = DsWidgets.Rect(host, "detail");
         DsWidgets.Place(_detail, DetailX, _listTop, DetailW, colH);
+        _detailW = DetailW;
 
         _name = DsWidgets.Label(_detail, "name", "", DetailTitleSize,
                                 DsTheme.Ink, TmpAlign.Left);
@@ -160,7 +210,17 @@ public class DsJournalScreen : IDsScreen
         _desc = DsWidgets.Label(_detail, "desc", "", DetailBodySize,
                                 DsTheme.InkDim, TmpAlign.TopLeft);
         if (_desc != null)
-            DsWidgets.Place(_desc.rectTransform, 0f, 68f, DetailW, colH - 76f);
+            DsWidgets.Place(_desc.rectTransform, 0f, DetailTextTop, DetailW, colH - 76f);
+
+        // The rule between what is known and what the hunter has to say about
+        // it, built once and moved to follow the prose. Two lines either side
+        // of her mask, which is how the game assembles it -- `divider`,
+        // `divider (1)` and `hunter_symbol` are three separate renderers.
+        _ruleRoot = DsWidgets.Rect(_detail, "rule");
+        DsWidgets.SetActive(_ruleRoot, false);
+
+        _notes = DsWidgets.Label(_detail, "notes", "", DetailBodySize,
+                                 DsTheme.InkDim, TmpAlign.TopLeft);
 
         // Inside the scrolling list, with the portraits, so the mask clips the
         // cursor exactly as it clips them. Half of 1 - 1/sqrt2: the diagonal gap
@@ -179,6 +239,15 @@ public class DsJournalScreen : IDsScreen
         // Before the refresh gate: the cursor animates every frame, and the
         // data is only re-read once a second.
         _cursor.Tick(dt);
+
+        // One more pass at the description's layout, the frame after it was
+        // written. ForceMeshUpdate covers the ordinary case, but a label whose
+        // FONT has not arrived yet cannot be measured at all -- and the pane is
+        // built before the fonts are found often enough to matter. A second
+        // pass costs one layout and removes the whole class of "it was wrong
+        // until I clicked something else".
+        if (_settle > 0) { _settle--; PaintDetail(); }
+
         if (Time.unscaledTime < _nextRefresh) return;
         _nextRefresh = Time.unscaledTime + 1f;
         Refresh(force: false);
@@ -196,6 +265,10 @@ public class DsJournalScreen : IDsScreen
         catch (Exception e) { Debug.LogWarning("[DsJournal] " + e.Message); }
 
         var sig = new System.Text.StringBuilder();
+        // Whether the game's ring art has arrived yet is part of the shape of
+        // the list: it is readable only once the game's own journal has been
+        // opened, and a grid drawn before then has to be rebuilt to pick it up.
+        sig.Append(DsGameArt.Frames().Ok ? "F;" : "f;");
         for (int i = 0; i < _entries.Count; i++)
         {
             var e = _entries[i];
@@ -269,6 +342,7 @@ public class DsJournalScreen : IDsScreen
                 Kills = kills,
                 Required = required,
                 Unseen = kills <= 0,
+                Complete = kills >= required,
             });
         }
     }
@@ -296,6 +370,7 @@ public class DsJournalScreen : IDsScreen
         if (_selected < 0 && _entries.Count > 0) { _selected = 0; _selectedKey = _entries[0].Name; }
 
         Paint();
+        _settle = 1;
         PaintDetail();
     }
 
@@ -323,6 +398,25 @@ public class DsJournalScreen : IDsScreen
                             : e.Unseen ? new Color(1f, 1f, 1f, 0.35f)
                             : Color.white;
             }
+
+            if (c.Ring != null)
+            {
+                // Two rings, and which one is the game's own rule: a creature
+                // whose notes are finished gets the ring with the flourishes on
+                // it. An unmet one gets the plain ring, dimmed -- the game
+                // hides its frames entirely there and shows an `emptyIcon`
+                // instead, which is a third piece of art this panel has no
+                // room to introduce for a row that says "???" anyway.
+                var frames = DsGameArt.Frames();
+                var art = e.Complete && !e.Unknown
+                        ? (frames.Complete ?? frames.Standard)
+                        : (frames.Standard ?? frames.Complete);
+
+                c.Ring.sprite = art;
+                c.Ring.color = art == null ? Color.clear
+                             : e.Unknown ? new Color(1f, 1f, 1f, 0.30f)
+                             : Color.white;
+            }
         }
 
         int rows = (_entries.Count + Columns - 1) / Columns;
@@ -334,14 +428,24 @@ public class DsJournalScreen : IDsScreen
     {
         var root = DsWidgets.Rect(_list, "cell" + index);
 
-        var ring = DsWidgets.Circle(root, "ring", DsTheme.PanelEdge);
+        // The ring is the game's own art when it can be had, drawn at the full
+        // cell. It replaced a flat disc behind the portrait, which was doing
+        // the job of a frame without looking like one.
+        var ring = DsWidgets.Icon(root, "ring", null, Color.white);
+        ring.preserveAspect = true;
         DsWidgets.Place(ring.rectTransform, 0f, 0f, _cell, _cell);
 
         // A Mask over the generated disc, so the square portrait is clipped to
-        // a circle. showMaskGraphic is off because the ring behind it already
+        // a circle. showMaskGraphic is off because the ring in front of it
         // draws the edge; this disc exists only to define the shape.
-        var maskRt = DsWidgets.Rect(ring.rectTransform, "mask");
-        DsWidgets.Stretch(maskRt, 4f);
+        //
+        // Inset by ArtInset rather than a few pixels: the ring's own line sits
+        // a little inside the sprite's bounds, and a portrait filling the whole
+        // circle would run under it. The picture is the thing being framed, so
+        // it gives way rather than the frame.
+        var maskRt = DsWidgets.Rect(root, "mask");
+        float inset = _cell * ArtInsetFraction;
+        DsWidgets.Place(maskRt, inset, inset, _cell - inset * 2f, _cell - inset * 2f);
         var maskImg = maskRt.gameObject.AddComponent<Image>();
         maskImg.sprite = DsTheme.Disc;
         maskImg.raycastTarget = false;
@@ -355,14 +459,10 @@ public class DsJournalScreen : IDsScreen
         art.preserveAspect = false;
         DsWidgets.Stretch(art.rectTransform);
 
-        // The game's own selection cursor -- two filigree corners, the
-        // bottom-right one the same sprite turned 180 degrees -- rather than a
-        // coloured ring, so selection looks the same here as it does on every
-        // other screen and in the game's own inventory.
-        //
-        // Anchored to the RING rather than to the cell. That mattered when the
-        // cell was taller than the circle by a caption; it is kept because the
-        // ring is what the bracket is framing either way.
+        // The ring draws OVER the portrait, so it is moved after the mask: the
+        // frame's inner edge should overlap the picture, not be hidden by it.
+        ring.rectTransform.SetAsLastSibling();
+
         return new Cell { Root = root, Ring = ring, Art = art };
     }
 
@@ -427,17 +527,169 @@ public class DsJournalScreen : IDsScreen
             }
         }
 
+        if (_glow != null)
+        {
+            // The same light the cursor puts behind an item it is on, rather
+            // than a disc: the game lights this portrait the way it lights
+            // anything it wants you to look at, and a hard-edged circle behind
+            // a creature reads as a plate it is standing on instead.
+            var cursor = DsGameArt.SelectionCursor();
+            var glow = cursor != null ? cursor.Glow : null;
+            // Never lights an unmet one, whose whole point is that it is a
+            // shape in the dark.
+            bool lit = ok && glow != null && _entries[_selected].Portrait != null
+                       && !_entries[_selected].Unknown;
+            _glow.sprite = glow;
+            _glow.color = lit ? cursor.GlowColor : Color.clear;
+        }
+
         if (_name != null) _name.text = ok ? _entries[_selected].Name : "";
 
-        if (_desc != null)
+        if (_desc == null) return;
+        if (!ok) { _desc.text = ""; ShowRule(false, 0f); return; }
+
+        var entry = _entries[_selected];
+        _desc.text = entry.Desc ?? "";
+
+        // Below the description, and only for a creature actually met: the
+        // game's own rule with the hunter's mask on it, and under that either
+        // her notes or how many more of them to defeat before she writes any.
+        //
+        // The two are the same slot because the game treats them as one --
+        // JournalItemManager writes both into `notesText`, dimming it while it
+        // holds the count -- and because a pane that showed a heading with
+        // nothing under it would be worse than one that showed neither.
+        string below = entry.Unknown ? ""
+                     : entry.Complete ? (entry.Notes ?? "")
+                     : LockedNote(entry);
+
+        float descH = 0f;
+        if (!string.IsNullOrEmpty(below) && !string.IsNullOrEmpty(_desc.text))
         {
-            if (!ok) { _desc.text = ""; return; }
-            var e = _entries[_selected];
-            string text = e.Desc ?? "";
-            if (!string.IsNullOrEmpty(e.Notes))
-                text = string.IsNullOrEmpty(text) ? e.Notes : text + "\n\n" + e.Notes;
-            _desc.text = text;
+            descH = MeasuredHeight(_desc, _detailW);
         }
+
+        if (string.IsNullOrEmpty(below))
+        {
+            ShowRule(false, 0f);
+            if (_notes != null) _notes.text = "";
+            return;
+        }
+
+        float ruleY = DetailTextTop + descH + RuleGap;
+        // Never so far down that the rule and what follows it leave the column.
+        // A description long enough to do that is rare, and losing the hunter's
+        // notes entirely would be a poor way to handle it.
+        float room = _listH - RuleH - RuleGap * 2f - MinNotesH;
+        if (ruleY > room) ruleY = Mathf.Max(DetailTextTop, room);
+        ShowRule(true, ruleY);
+
+        if (_notes != null)
+        {
+            _notes.text = below;
+            // The count is the game's disabled ink, as its own pane dims the
+            // same line while it says this; the notes themselves are not dim.
+            _notes.color = entry.Complete ? DsTheme.InkDim : DsTheme.InkFaint;
+            DsWidgets.Place(_notes.rectTransform, 0f, ruleY + RuleH + RuleGap,
+                            _detailW, Mathf.Max(60f, _listH - ruleY - RuleH - RuleGap * 2f));
+        }
+    }
+
+    /// <summary>
+    /// The game's own "defeat N more" line, with the number filled in.
+    ///
+    /// `string.Format(notesLockedText, killsRequired - killCount)` is exactly
+    /// what JournalItemManager does, so the wording and the language are the
+    /// game's. A fallback in English only for a save whose journal pane has
+    /// never been built and has no string to lend.
+    /// </summary>
+    static string LockedNote(Entry e)
+    {
+        int left = Mathf.Max(1, e.Required - e.Kills);
+        string format = DsGameArt.JournalNotesLocked();
+        if (!string.IsNullOrEmpty(format))
+        {
+            try { return string.Format(format, left); } catch { }
+        }
+        return "Defeat " + left + " more to complete the Hunter's Notes.";
+    }
+
+    /// <summary>
+    /// How tall a label's text actually is at a given width.
+    ///
+    /// ForceMeshUpdate first, and that is the whole point of this existing.
+    /// TMP lays a label out on ITS next update, not when the text is assigned,
+    /// so measuring straight after setting it returns whatever the label held
+    /// before -- which on the first open of the pane is nothing at all. The
+    /// symptom was precise and confusing: the hunter's mask drawn a line or two
+    /// INTO the description instead of below it, correcting itself the moment
+    /// the selection changed and the measurement ran against a laid-out label.
+    /// </summary>
+    static float MeasuredHeight(TmpText label, float width)
+    {
+        if (label == null) return 0f;
+        try
+        {
+            label.ForceMeshUpdate();
+            float h = label.GetPreferredValues(label.text, width, 0f).y;
+            if (h > 0f) return h;
+        }
+        catch { }
+        // Better to push the rule too far down than to draw it through the
+        // prose, so an unmeasurable label is treated as a full column.
+        try { return label.preferredHeight; } catch { return 0f; }
+    }
+
+    /// <summary>Show or hide the rule under the description, at <paramref name="y"/>.</summary>
+    void ShowRule(bool on, float y)
+    {
+        if (_ruleRoot == null) return;
+        DsWidgets.SetActive(_ruleRoot, on);
+        if (!on) return;
+
+        DsWidgets.Place(_ruleRoot, 0f, y, _detailW, RuleH);
+        BuildRule();
+    }
+
+    /// <summary>
+    /// The rule itself: the hunter's mask, centred, and nothing else.
+    ///
+    /// The game sets two tapered lines either side of it, and they were drawn
+    /// here too at first. In a 330-pixel column they read as three small marks
+    /// in a row rather than as one device, and the mask -- which is the part
+    /// that says whose notes these are -- was the smallest of them. Alone and
+    /// larger it does the whole job: what follows is a different voice, and a
+    /// line across the column was never what said so.
+    ///
+    /// Rebuilt only when the art it is made of changes, which in practice means
+    /// once -- the mask is readable only after the game's own journal has been
+    /// opened.
+    /// </summary>
+    void BuildRule()
+    {
+        var art = DsGameArt.Rule();
+        string sig = art.Symbol != null ? art.Symbol.name : "-";
+        if (sig == _ruleSig) return;
+        _ruleSig = sig;
+
+        for (int i = _ruleRoot.childCount - 1; i >= 0; i--)
+            UnityEngine.Object.Destroy(_ruleRoot.GetChild(i).gameObject);
+
+        if (art.Symbol == null)
+        {
+            // Nothing to draw it with yet; a plain hairline says "and now
+            // something else" well enough until the mask arrives.
+            DsWidgets.HRule(_ruleRoot, "rule", (_detailW - RuleReach) * 0.5f,
+                            RuleH * 0.5f, RuleReach);
+            return;
+        }
+
+        var r = art.Symbol.rect;
+        float w = Mathf.Clamp(RuleSymbolH * (r.width / Mathf.Max(r.height, 1f)), 12f, 200f);
+        var sym = DsWidgets.Icon(_ruleRoot, "mask", art.Symbol, DsTheme.Rule);
+        sym.preserveAspect = true;
+        DsWidgets.Place(sym.rectTransform, (_detailW - w) * 0.5f,
+                        (RuleH - RuleSymbolH) * 0.5f, w, RuleSymbolH);
     }
 
     // ── input ───────────────────────────────────────────────────────────────
@@ -455,6 +707,7 @@ public class DsJournalScreen : IDsScreen
                     _selected = hit;
                     _selectedKey = _entries[hit].Name;
                     Paint();
+                    _settle = 1;
                     PaintDetail();
                 }
                 break;
