@@ -67,7 +67,7 @@ Android SDK and a JDK, but not a game depot or a running Unity player.
 
 | | |
 | --- | --- |
-| `ResolutionConfigurator` | render resolution and shape, matched to the window; landscape only |
+| `ResolutionConfigurator` | the resolution the player chose, remembered across launches; shape matched to the window; landscape only |
 | `AspectGate` | fill screens the game letterboxes — foldables, 4:3 — when switched on |
 | `IntroSkipper` | optionally skip the studio logos and opening quote |
 | `AnimatorRebindFix` | rebind animators that load disabled, so they play |

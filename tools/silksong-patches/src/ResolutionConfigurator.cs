@@ -1,32 +1,42 @@
-// ResolutionConfigurator — the frame cap, and a sensible starting resolution.
+// ResolutionConfigurator — the frame cap, and the resolution the player chose.
 //
 // ── the resolution ──────────────────────────────────────────────────────────
 //
-// This used to be a launcher setting: pick 720p/900p/1080p/native in Settings,
-// and every boot would force it with Screen.SetResolution. That is gone, and
-// the reason it could go is worth writing down, because it was not obvious.
+// It is the player's, and keeping it is the whole job. Nothing here picks one:
+// a device that has never run this renders at whatever the engine hands it,
+// which is the window's own size. The only resolution this file ever applies is
+// one the player asked for in the game's own video options.
 //
-// Unity persists the resolution ON ANDROID. After a Screen.SetResolution the
-// player prefs carry
+// It has to be kept here, because the mechanism that looks like it does this
+// already does not. Unity writes
 //
-//     Screenmanager Resolution Width  = 1280
-//     Screenmanager Resolution Height = 720
+//     Screenmanager Resolution Width  = 1920
+//     Screenmanager Resolution Height = 1080
 //     Screenmanager Fullscreen mode   = 1
 //
-// and the engine restores them on the next launch. So there is nothing to
-// re-apply: forcing it every boot was not making it stick, it was overwriting
-// whatever the player had chosen since.
+// into the player prefs, and on a desktop the engine reads them back at
+// startup. On Android that is not a promise: the player is handed the window's
+// size on every launch and the pref is overwritten with it, so a resolution
+// chosen in the menu lasted exactly as long as the process did and every launch
+// came back at the panel's full size. An earlier version of this file believed
+// the desktop behaviour, wrote a one-time 720p default and then left the
+// resolution alone forever -- which is why it looked like the default had
+// stopped working: it had not, nothing was keeping anything.
 //
-// What is left is a default. 720p, applied exactly once, on a device that has
-// never run this before -- roughly half the pixels of a 1080p panel, which is
-// most of a battery saving on art that tolerates the downscale. After that the
-// game owns it, including through its own resolution menu, and nothing here
-// touches it again.
+// So there is a key of our own, and what goes in it is the SHORT SIDE alone --
+// 720, 900, 1080 -- rather than a pair of numbers. The short side is the
+// choice: how many pixels to draw is what the player was picking. The width
+// that goes with it belongs to the window and is derived from it every time, so
+// a size chosen on a foldable's cover screen still means something on the inner
+// one and a rotation leaves no stale width behind. It is capped at the window's
+// own short side, because rendering more pixels than are displayed costs
+// battery and buys nothing.
 //
-// Nothing is clamped any more either. The old code refused to set anything at
-// or above the panel's short dimension, which meant the highest modes were
-// unreachable by design; the panel's own modes are exactly what the game's
-// menu offers, and they should work.
+// A change is the PLAYER'S when it happens while the game's video options are
+// on screen -- ResolutionMenuOptions is already watching that pane -- and that
+// is the only thing that writes the key. Every other change is the engine's,
+// and gets put back. There is no third thing that legitimately resizes a render
+// target behind the player's back.
 //
 // ── the shape ───────────────────────────────────────────────────────────────
 //
@@ -64,7 +74,7 @@ public static class ResolutionConfigurator
     {
         ApplyFrameRate();
         PinLandscape();
-        ApplyDefaultResolution();
+        RestoreChosenResolution();
     }
 
     /**
@@ -213,17 +223,19 @@ public static class ResolutionConfigurator
     }
 
     /**
-     * 720p, once, on a device that has never run this before.
+     * The resolution the player last chose, put back.
      *
-     * The marker is ours rather than Unity's. Unity writes its own
-     * "Screenmanager Resolution Width" on first run too -- with the panel's
-     * native size -- so its presence says nothing about whether anybody has
-     * chosen anything. A key only this code writes is the only way to tell
-     * "never been here" from "been here, and the player picked native".
+     * Nothing is chosen here. Without a stored choice this does nothing at all
+     * and the game renders at the size the engine handed us, which is the
+     * window's -- a fresh install looks exactly like the game with no patches
+     * in it, and the first resolution anyone sees is one they picked.
      *
-     * After this has run once it never runs again, and the resolution belongs
-     * to the game: its own menu writes Screenmanager Resolution Width/Height,
-     * Unity restores them at boot, and nothing here interferes.
+     * The stored short side is capped at the window's, and the width is derived
+     * from the window rather than stored beside it. Both are for the same
+     * reason: the window is not the same rectangle on every launch -- a
+     * foldable opens, a phone is put in split screen, a handheld is docked --
+     * and a pixel count means something in all of those while a pair of numbers
+     * does not.
      *
      * ALWAYS landscape. Android reports some panels as 1080x1920 -- portrait,
      * the orientation the hardware is mounted in -- so deriving the target's
@@ -232,60 +244,125 @@ public static class ResolutionConfigurator
      * stop, and the same assumption is what ResolutionGuard enforces for the
      * resolutions the game's own menu offers.
      */
-    const string PREF_DEFAULT_APPLIED = "SilksongAndroidDefaultRes";
-    const int DEFAULT_SHORT_SIDE = 720;
-
-    static void ApplyDefaultResolution()
+    static void RestoreChosenResolution()
     {
         try
         {
             ResolutionGuard.Install();
             ResolutionMenuOptions.Install();
 
-            if (PlayerPrefs.GetInt(PREF_DEFAULT_APPLIED, 0) != 0)
+            int chosen = ResolutionChoice.ShortSide;
+            if (chosen <= 0)
             {
-                Debug.Log($"[ResolutionConfigurator] resolution is the game's: {Screen.width}x{Screen.height}");
+                Debug.Log($"[ResolutionConfigurator] no resolution chosen yet; "
+                          + $"rendering at the window's own {Screen.width}x{Screen.height}");
                 return;
             }
 
-            int longSide, shortSide;
-            if (!ResolutionMenuOptions.TryWindow(out longSide, out shortSide))
+            int winLong, winShort;
+            if (!ResolutionMenuOptions.TryWindow(out winLong, out winShort))
             {
-                // No usable geometry yet. Not marked as decided, so the next
-                // launch gets another go rather than silently keeping whatever
-                // Unity picked.
-                Debug.LogWarning("[ResolutionConfigurator] no window geometry yet; leaving the resolution alone");
+                // No usable geometry this early. ResolutionGuard is installed
+                // and polls, so the choice is applied a moment later instead of
+                // being lost.
+                Debug.LogWarning("[ResolutionConfigurator] no window geometry yet; "
+                                 + $"the guard will restore {chosen}p");
                 return;
             }
 
-            // A panel already at or below the default is left alone: there is
-            // nothing to save, and scaling UP would be worse than doing nothing.
-            if (shortSide > DEFAULT_SHORT_SIDE)
+            int shortSide = Mathf.Min(chosen, winShort);
+            int longSide = ResolutionMenuOptions.WidthFor(winLong, winShort, shortSide);
+            if (longSide == Screen.width && shortSide == Screen.height)
             {
-                // Derived through the same pair of helpers the menu uses, so
-                // this lands exactly on one of its rows rather than a pixel
-                // beside it.
-                int width = ResolutionMenuOptions.WidthFor(longSide, shortSide, DEFAULT_SHORT_SIDE);
-                Screen.SetResolution(width, DEFAULT_SHORT_SIDE, true);
-                Debug.Log(
-                    $"[ResolutionConfigurator] first run: defaulting to {width}x{DEFAULT_SHORT_SIDE} " +
-                    $"(window {longSide}x{shortSide}). Change it in the game's video options.");
-            }
-            else
-            {
-                Debug.Log(
-                    $"[ResolutionConfigurator] first run: window is {longSide}x{shortSide}, " +
-                    "already at or below the default; leaving it alone");
+                Debug.Log($"[ResolutionConfigurator] already at the chosen {longSide}x{shortSide}");
+                return;
             }
 
-            // Written whether or not the resolution was changed. The question
-            // it answers is "has the default been decided", and it has been.
-            PlayerPrefs.SetInt(PREF_DEFAULT_APPLIED, 1);
-            PlayerPrefs.Save();
+            Screen.SetResolution(longSide, shortSide, true);
+            Debug.Log($"[ResolutionConfigurator] restoring the chosen {longSide}x{shortSide} "
+                      + $"(was {Screen.width}x{Screen.height}, window {winLong}x{winShort})");
         }
         catch (System.Exception ex)
         {
             Debug.LogWarning("[ResolutionConfigurator] couldn't set the resolution: " + ex.Message);
+        }
+    }
+}
+
+/**
+ * The one number this port remembers about the resolution: the short side the
+ * player chose, in pixels.
+ *
+ * It is a key of our own rather than Unity's "Screenmanager Resolution Height"
+ * because Unity's is not ours to trust on Android -- the engine overwrites it
+ * with the window's size on launch, which is what made a chosen resolution look
+ * like it was being ignored. This one is written by exactly one caller,
+ * ResolutionGuard, and only for a change made while the player was in the
+ * game's video options.
+ *
+ * Zero, the default, means "never chosen". That is a state with a meaning:
+ * nothing is applied at boot and the engine's own size stands. It is not the
+ * same as a player who chose the panel's full size, which is stored like any
+ * other choice and put back like any other choice.
+ *
+ * Cached, because it is read on every poll and PlayerPrefs on Android is a
+ * JNI call into SharedPreferences.
+ */
+static class ResolutionChoice
+{
+    const string Pref = "SilksongAndroidResShort";
+    // The marker the one-time 720p default used to be gated on. Removed rather
+    // than left lying about, so that a prefs file dumped off a device does not
+    // suggest a mechanism that no longer exists.
+    const string LegacyDefaultApplied = "SilksongAndroidDefaultRes";
+    // Below this is not a resolution anybody picked, it is a transient: the
+    // game's own display-switch hack drops to 800x600 for a single frame.
+    const int Floor = 240;
+
+    static int _shortSide = -1;
+
+    /// <summary>The chosen short side, or 0 if nobody has chosen one.</summary>
+    public static int ShortSide
+    {
+        get
+        {
+            if (_shortSide < 0)
+            {
+                try
+                {
+                    _shortSide = PlayerPrefs.GetInt(Pref, 0);
+                    if (PlayerPrefs.HasKey(LegacyDefaultApplied))
+                    {
+                        PlayerPrefs.DeleteKey(LegacyDefaultApplied);
+                        PlayerPrefs.Save();
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    _shortSide = 0;
+                    Debug.LogWarning("[ResolutionChoice] couldn't read the stored resolution: " + e.Message);
+                }
+            }
+            return _shortSide;
+        }
+    }
+
+    /// <summary>Records a short side the player asked for. Ignores nonsense.</summary>
+    public static void Remember(int shortSide)
+    {
+        if (shortSide < Floor) return;
+        if (shortSide == ShortSide) return;
+
+        _shortSide = shortSide;
+        try
+        {
+            PlayerPrefs.SetInt(Pref, shortSide);
+            PlayerPrefs.Save();
+            Debug.Log($"[ResolutionChoice] remembering {shortSide}p as the chosen resolution");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[ResolutionChoice] couldn't store the resolution: " + e.Message);
         }
     }
 }
@@ -486,9 +563,29 @@ public class ResolutionMenuOptions : MonoBehaviour
     static System.Reflection.FieldInfo _field;
     static bool _lookedUp;
     static bool _warned;
+    static float _lastOpen = -9999f;
 
     float _next;
     UnityEngine.UI.MenuResolutionSetting _opt;
+
+    /// <summary>
+    /// Is the resolution changing because the player is changing it?
+    ///
+    /// The game's resolution control lives in one pane, and this class is
+    /// already watching that pane four times a second, so the question costs
+    /// nothing to answer. It is the whole basis for telling a choice from an
+    /// accident: a resolution that changes while these options are on screen is
+    /// the player's, and one that changes at any other time is the engine's.
+    ///
+    /// The grace exists because applying the choice is not the end of it. The
+    /// game puts up its own "keep this resolution?" prompt with a timer, and
+    /// the size can still change -- to the chosen one, or back again if the
+    /// prompt times out -- after the pane itself has gone.
+    /// </summary>
+    public static bool PlayerIsChoosing(float graceSeconds)
+    {
+        return Time.unscaledTime - _lastOpen <= graceSeconds;
+    }
 
     public static void Install()
     {
@@ -524,6 +621,7 @@ public class ResolutionMenuOptions : MonoBehaviour
             }
             var opt = _opt;
             if (opt == null || !opt.isActiveAndEnabled) return;
+            _lastOpen = Time.unscaledTime;
 
             var field = Field();
             if (field == null) return;
@@ -733,18 +831,27 @@ public class ResolutionMenuOptions : MonoBehaviour
 }
 
 /**
- * Keeps the render target the same shape as the window.
+ * Keeps the render target the player's: their pixel count, the window's shape.
  *
- * Two things go wrong without this, and they have the same cause.
+ * Three things go wrong without this, and they have the same cause -- a render
+ * target nobody is keeping.
  *
- * The first is a render target that never matched the window to begin with.
+ * The first is a resolution that does not survive the process. Unity's own
+ * persistence is a desktop promise; on Android the engine hands the player the
+ * window's size on every launch and overwrites the stored one with it. So the
+ * choice is stored here instead, in ResolutionChoice, and put back here: every
+ * size that is not the chosen one is corrected, whether it arrived at boot,
+ * after a resume, or from whatever else in the engine decided to resize the
+ * surface.
+ *
+ * The second is a render target that never matched the window to begin with.
  * Everything used to be derived from Screen.resolutions -- the DISPLAY's modes,
  * which on a foldable, a large screen that letterboxes us, or a 4:3 handheld
  * are a different shape from the window we are actually given. A 16:9 frame in
  * a 4:3 window is displayed with bars added around it, and those bars are on
  * top of the ones the game draws itself.
  *
- * The second is rotation, and it is the same mismatch arriving later. Rotating
+ * The third is rotation, and it is the same mismatch arriving later. Rotating
  * to portrait and back left the game squashed and never recovered, because the
  * old guard did one thing -- transpose a portrait Screen into a landscape one
  * -- and then remembered the size it had CORRECTED. Screen.width and
@@ -753,16 +860,14 @@ public class ResolutionMenuOptions : MonoBehaviour
  * landscape, returned early forever, and the window underneath could change
  * shape as often as it liked without anything noticing.
  *
- * So the question asked here is about the WINDOW, which is the one thing our
- * own corrections cannot change. Every window that is a different shape from
- * the frame we are rendering gets exactly one correction, and a window that
- * changes again -- rotated back, unfolded, resized -- is a different window and
- * gets its own. That is what makes it recover.
+ * So both questions asked here are about things our own corrections cannot
+ * change: the WINDOW, asked of Android, and the choice, stored in a pref. What
+ * is on screen is only ever compared against those two, never against itself.
  *
- * The short side is left alone: how many pixels to render is the player's
- * choice, and only the shape is ours to fix. It is capped at the window's own,
- * because rendering more pixels than are displayed costs battery and buys
- * nothing.
+ * And the choice is only ever written in one place -- here, from a size that
+ * changed while the player was in the game's video options. That is what makes
+ * "put it back" safe: everything else that moves the resolution is something
+ * the player did not ask for.
  */
 public class ResolutionGuard : MonoBehaviour
 {
@@ -778,11 +883,29 @@ public class ResolutionGuard : MonoBehaviour
     // Not ours to change; worth reporting, so that bars which are Team Cherry's
     // are not mistaken for bars which are ours.
     const float GAME_FLOOR_ASPECT = 1.6f;
+    // How long after the video options were last on screen a change is still
+    // the player's doing. It covers the game's own "keep this resolution?"
+    // prompt, which HIDES the video pane while it counts down and can change
+    // the size twice -- once on apply, once more if it rolls back.
+    const float MENU_GRACE_SECONDS = 30f;
+    // Corrections for one window and one target before giving up on it. If the
+    // engine is going to overwrite us whatever we do, a correction every half
+    // second is a flicker rather than a fix. Reset the moment one takes.
+    const int MAX_ATTEMPTS = 3;
+    const float RETRY_SECONDS = 2f;
 
     static ResolutionGuard _instance;
     float _next;
-    int _triedLong, _triedShort;
     bool _reported;
+    // What the attempts below are about: a window, and the short side wanted in
+    // it. Any change to either is a different problem and gets its own budget.
+    int _forLong, _forShort, _forTarget;
+    int _attempts;
+    float _lastAttempt;
+    bool _gaveUp;
+    // The short side seen on the previous poll, for as long as the player is
+    // the one changing it. Two polls agreeing is what makes a size a choice.
+    int _settledShort;
 
     public static void Install()
     {
@@ -809,37 +932,80 @@ public class ResolutionGuard : MonoBehaviour
         int haveLong = Mathf.Max(Screen.width, Screen.height);
         int haveShort = Mathf.Max(Mathf.Min(Screen.width, Screen.height), 1);
 
-        // Portrait is always wrong: the game only runs landscape, and a
-        // portrait render target is what the old menu could hand it.
+        // Portrait is never a choice and never right: the game only runs
+        // landscape, and a portrait render target is what a rotation in
+        // progress and the game's own unpatched menu can both hand it.
         bool portrait = Screen.height > Screen.width;
+
+        // The player's, while the player is the one changing it. Recorded only
+        // once the size has held for two polls: the game's display option drops
+        // to 800x600 for a single frame on its way somewhere else, and a
+        // transient is not a choice.
+        bool theirs = !portrait && ResolutionMenuOptions.PlayerIsChoosing(MENU_GRACE_SECONDS);
+        if (theirs)
+        {
+            if (haveShort == _settledShort) ResolutionChoice.Remember(haveShort);
+            _settledShort = haveShort;
+        }
+        else
+        {
+            _settledShort = 0;
+        }
+
+        // What is on screen is the target while the player is working the menu,
+        // which leaves only the shape to correct: a stored choice is the LAST
+        // thing they asked for, and putting it back over the one they are
+        // asking for now would make the menu unusable. Outside the menu the
+        // stored choice is the target, and with nothing stored the pixel count
+        // on screen is the engine's and stands -- a device that has never been
+        // told what to render at renders at its own size.
+        int chosen = ResolutionChoice.ShortSide;
+        int wanted = (theirs || chosen <= 0) ? haveShort : chosen;
+        int target = Mathf.Min(wanted, winShort);
+        int longSide = ResolutionMenuOptions.WidthFor(winLong, winShort, target);
+
         float want = winLong / (float)winShort;
         float have = haveLong / (float)haveShort;
         bool wrongShape = Mathf.Abs(want - have) / want > TOLERANCE;
 
-        if (!portrait && !wrongShape)
+        if (!portrait && !wrongShape && haveShort == target)
         {
-            // Fits. Forget any attempt made for an earlier window, so that a
-            // window which comes back to a shape we once failed on is tried
-            // again rather than written off.
-            _triedLong = 0;
-            _triedShort = 0;
+            // Fits, and is what was asked for. Forget the attempts it took to
+            // get here, so that a size the engine takes away later -- on a
+            // resume, a fold, a rotation -- is put back with a full budget
+            // rather than with what an earlier window had left.
+            _attempts = 0;
+            _gaveUp = false;
             return;
         }
 
-        // Tried already, for this exact window. Either the correction did not
-        // take or something is re-applying it, and repeating it every half
-        // second would turn a cosmetic problem into a flickering one.
-        if (winLong == _triedLong && winShort == _triedShort) return;
-        _triedLong = winLong;
-        _triedShort = winShort;
+        if (winLong != _forLong || winShort != _forShort || target != _forTarget)
+        {
+            _forLong = winLong;
+            _forShort = winShort;
+            _forTarget = target;
+            _attempts = 0;
+            _gaveUp = false;
+        }
 
-        int shortSide = Mathf.Min(haveShort, winShort);
-        int longSide = ResolutionMenuOptions.WidthFor(winLong, winShort, shortSide);
-        if (longSide == Screen.width && shortSide == Screen.height) return;
+        if (_attempts >= MAX_ATTEMPTS)
+        {
+            if (_gaveUp) return;
+            _gaveUp = true;
+            Debug.LogWarning($"[ResolutionGuard] {longSide}x{target} would not stick after "
+                             + $"{MAX_ATTEMPTS} tries; leaving {Screen.width}x{Screen.height} "
+                             + "until the window or the choice changes");
+            return;
+        }
+        if (Time.unscaledTime - _lastAttempt < RETRY_SECONDS) return;
 
-        Debug.Log($"[ResolutionGuard] {Screen.width}x{Screen.height} does not fit a "
-                  + $"{winLong}x{winShort} window; using {longSide}x{shortSide}");
-        Screen.SetResolution(longSide, shortSide, true);
+        _attempts++;
+        _lastAttempt = Time.unscaledTime;
+
+        Debug.Log($"[ResolutionGuard] {Screen.width}x{Screen.height} is not "
+                  + (theirs || chosen <= 0 ? "the right shape" : $"the chosen {chosen}p")
+                  + $" for a {winLong}x{winShort} window; using {longSide}x{target}");
+        Screen.SetResolution(longSide, target, true);
     }
 
     /**
