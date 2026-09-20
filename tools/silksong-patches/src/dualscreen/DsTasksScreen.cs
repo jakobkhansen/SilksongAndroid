@@ -234,6 +234,14 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     const float IconGap = 14f;
     const float CellPadL = 4f;
     const float CellPadR = 8f;
+    /// <summary>
+    /// How far the caret's rect reaches past the words it frames.
+    ///
+    /// Sized for the bracket art rather than for taste: a corner is about 44 px
+    /// and is centred on the rect's corner, so without room of its own half of
+    /// it lands on the text.
+    /// </summary>
+    const float FocusPad = 26f;
 
     // The type line is set to the game's own proportion: 3.8 against 6, a shade
     // under two-thirds. Smaller than that and the caps stop reading as a word;
@@ -1187,6 +1195,20 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         // left-aligned layout -- worse looking, never broken.
         if (main)
         {
+            // Measured at the face just set above, and deliberately WITHOUT a
+            // ForceMeshUpdate first.
+            //
+            // That was tried, to settle the label before asking -- the trick
+            // the journal's rule needs. Here it is actively wrong: this label
+            // has enableAutoSizing, so forcing a layout re-fits the font to
+            // whatever rect the label currently has, and the measurement then
+            // answers at that reduced size. The rect is then set from it, so
+            // each pass shrinks the next: the prioritised quest collapsed from
+            // "Silent Halls" to "Sil" in a couple of frames.
+            //
+            // Nothing needs settling anyway. fontSize was assigned a few lines
+            // up, and GetPreferredValues measures the string at the label's
+            // current settings rather than at its last laid-out state.
             float want = 0f;
             if (cell.Label != null)
                 try { want = cell.Label.GetPreferredValues(cell.Label.text).x; } catch { }
@@ -1244,8 +1266,18 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
 
         PaintCounter(cell, e, textX, top + typeH + nameH, textW, counterH, main);
 
-        blockX = iconX;
-        blockW = Mathf.Min(iconSize + IconGap + textW, w - iconX);
+        // What the caret frames, which is NOT the same as what was drawn.
+        //
+        // A bracket is a piece of art about 44 px across sitting ON the corner
+        // of the rect it is given, so a rect drawn tight to the content puts
+        // half of it over that content: the bottom-right bracket landed on the
+        // last letters of "Silent Halls". The rect is therefore grown by enough
+        // for the bracket to sit beside the words rather than across them, and
+        // clamped to the cell so a row does not reach past its own edge.
+        float left = Mathf.Max(0f, iconX - FocusPad);
+        float right = Mathf.Min(w, iconX + iconSize + IconGap + textW + FocusPad);
+        blockX = left;
+        blockW = Mathf.Max(40f, right - left);
     }
 
     /// <summary>Whether an entry has anything to draw under its name.</summary>

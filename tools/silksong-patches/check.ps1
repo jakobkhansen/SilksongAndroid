@@ -11,6 +11,14 @@
 # the real one against the depot it already has.
 #
 # Usage:  pwsh tools/silksong-patches/check.ps1
+#
+# Run it BARE. Do not pipe its output -- not `| Select-Object -Last 5`, not
+# `| Select-String error`. It hangs, with no output, looking exactly like a
+# slow compile, and leaves a dotnet behind that the next run then waits on.
+# The reason is the one described further down against the build call itself:
+# MSBuild writes to the console handle while a PowerShell pipeline is
+# buffering, and the two deadlock. It already prints only four lines, so there
+# is nothing worth filtering.
 [CmdletBinding()]
 param(
     # Where the game's own assemblies live. Any depot copy will do.
