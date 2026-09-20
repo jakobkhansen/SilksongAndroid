@@ -90,6 +90,9 @@ public static class DsGameArt
         _inventory = null; _cursor = null; _nextInventorySearch = 0f;
         _questFluer = null; _questSectionRule = null; _nextFluerSearch = 0f;
         _questCounter = null; _nextCounterSearch = 0f;
+        _toolDividers.Clear(); _nextDividerSearch = 0f;
+        _unlockItem = null; _nextUnlockSearch = 0f;
+        _lockedSocket = null; _nextLockedSearch = 0f;
         if (_silhouette != null) { UnityEngine.Object.Destroy(_silhouette); _silhouette = null; }
     }
 
@@ -624,6 +627,185 @@ public static class DsGameArt
         }
         catch { return null; }
     }
+
+    // ── the tool list's section dividers ────────────────────────────────────
+
+    /// <summary>A divider as the game draws it: its art, and the tint it uses.</summary>
+    public struct Divider
+    {
+        public Sprite Sprite;
+        public Color Colour;
+        public bool Ok { get { return Sprite != null; } }
+    }
+
+    static readonly Dictionary<int, Divider> _toolDividers = new Dictionary<int, Divider>();
+    static float _nextDividerSearch;
+
+    /// <summary>
+    /// The rule the game's own tool list puts between two groups.
+    ///
+    /// It is not a line with a label: it is one piece of art per tool type --
+    /// a hairline with that type's glyph worked into the middle of it -- which
+    /// is why this screen's groups no longer carry the words ATTACK and
+    /// SURVIVAL. The glyph says it, in the colour the game uses for that type,
+    /// and it says it in the game's own hand.
+    ///
+    /// InventoryItemToolManager.listSectionHeaders is the array, indexed by
+    /// ToolItemType's RAW value rather than by display order -- the game orders
+    /// the sections with an [EnumOrder] attribute and indexes the headers with
+    /// the enum itself. Getting that wrong is subtle: every divider appears,
+    /// each just carries the wrong group's glyph.
+    ///
+    /// Read off the live pane, like everything else here: the sprite is the
+    /// placeholder GUID in a decompile. The renderer's own tint comes with it,
+    /// so a white glyph the game colours and a glyph that is already coloured
+    /// both come out right.
+    /// </summary>
+    public static Divider ToolSectionDivider(ToolItemType type)
+    {
+        Divider found;
+        if (_toolDividers.TryGetValue((int)type, out found) && found.Ok) return found;
+        if (Time.unscaledTime < _nextDividerSearch) return found;
+        _nextDividerSearch = Time.unscaledTime + 2f;
+
+        try
+        {
+            var field = typeof(InventoryItemToolManager)
+                .GetField("listSectionHeaders", Priv);
+            if (field == null) return found;
+
+            var managers = Resources.FindObjectsOfTypeAll<InventoryItemToolManager>();
+            for (int m = 0; m < managers.Length; m++)
+            {
+                if (managers[m] == null) continue;
+                var headers = field.GetValue(managers[m]) as System.Array;
+                if (headers == null) continue;
+
+                for (int i = 0; i < headers.Length; i++)
+                {
+                    var holder = headers.GetValue(i) as Component;
+                    if (holder == null) continue;
+
+                    // Include disabled renderers. The headers are switched off
+                    // in the serialised prefab and the pane turns them on as it
+                    // builds, so a search that respected `enabled` would find
+                    // nothing at all before the player first opens the tools.
+                    var sr = holder.GetComponent<SpriteRenderer>()
+                          ?? holder.GetComponentInChildren<SpriteRenderer>(true);
+                    if (sr == null || sr.sprite == null) continue;
+
+                    _toolDividers[i] = new Divider { Sprite = sr.sprite, Colour = sr.color };
+                    Debug.Log("[DsGameArt] tool divider " + i + ": " + sr.sprite.name +
+                              " " + sr.sprite.rect.width + "x" + sr.sprite.rect.height +
+                              " colour=" + sr.color + " enabled=" + sr.enabled);
+                }
+                if (_toolDividers.Count > 0) break;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DualScreen] tool dividers unavailable: " + e.Message);
+        }
+
+        _toolDividers.TryGetValue((int)type, out found);
+        return found;
+    }
+
+    static Sprite _lockedSocket;
+    static float _nextLockedSearch;
+
+    /// <summary>
+    /// The little notch the game draws where a socket has not been opened yet.
+    ///
+    /// A locked socket is NOT a slot with a grey symbol in it: the game shows a
+    /// small glyph and nothing else -- no ring, no tool -- which reads as a
+    /// fitting with no socket rather than as a socket that is empty.
+    ///
+    /// The glyph is the slot's own `slotTypeSprite`, which is exactly what
+    /// InventoryToolCrestSlot.Sprite returns when nothing is equipped:
+    ///
+    ///     public override Sprite Sprite
+    ///         => !EquippedItem ? slotTypeSprite : EquippedItem.InventorySpriteBase;
+    ///
+    /// Read from a slot that is actually LOCKED rather than from any slot of
+    /// the same type, so that whatever that socket would show is what we show.
+    ///
+    /// Worth recording what this is NOT, because both were tried: the slot's
+    /// `slotTypeIcon` renderer holds UI_tool_slot_attack0004 at 181x181, which
+    /// is the slot's RING -- using it drew a plain circle. Nor is the glyph a
+    /// renderer anywhere under the slot; a dump of a locked one showed only
+    /// Background, Background_Filled, Item Icon, Shadow and White Flash, every
+    /// one of them inactive while the game's pane is closed.
+    /// </summary>
+    public static Sprite LockedSocketSymbol()
+    {
+        if (_lockedSocket != null) return _lockedSocket;
+        if (Time.unscaledTime < _nextLockedSearch) return null;
+        _nextLockedSearch = Time.unscaledTime + 2f;
+
+        try
+        {
+            var field = typeof(InventoryToolCrestSlot).GetField("slotTypeSprite", Priv);
+            if (field == null) return null;
+
+            var slots = Resources.FindObjectsOfTypeAll<InventoryToolCrestSlot>();
+            for (int i = 0; i < slots.Length && _lockedSocket == null; i++)
+            {
+                var slot = slots[i];
+                if (slot == null) continue;
+
+                bool locked = false;
+                try { locked = slot.IsLocked; } catch { }
+                if (!locked) continue;
+
+                var sprite = field.GetValue(slot) as Sprite;
+                if (sprite == null) continue;
+
+                _lockedSocket = sprite;
+                Debug.Log("[DsGameArt] locked socket glyph: " + sprite.name +
+                          " " + sprite.rect.width + "x" + sprite.rect.height +
+                          " from " + slot.name + " (" + slot.Type + ")");
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DualScreen] locked socket glyph unavailable: " + e.Message);
+        }
+        return _lockedSocket;
+    }
+
+    /// <summary>
+    /// The item a locked crest socket is opened with -- the Memory Locket.
+    ///
+    /// Asked of the game rather than looked up by name: it is a serialised
+    /// field on the tool pane (`slotUnlockItem`), so whatever the game spends
+    /// is what we spend, and a save with none of them answers zero through the
+    /// same CollectedAmount the game's own CanUnlockSlot reads.
+    /// </summary>
+    public static CollectableItem SlotUnlockItem()
+    {
+        if (_unlockItem != null) return _unlockItem;
+        if (Time.unscaledTime < _nextUnlockSearch) return null;
+        _nextUnlockSearch = Time.unscaledTime + 2f;
+
+        try
+        {
+            var managers = Resources.FindObjectsOfTypeAll<InventoryItemToolManager>();
+            for (int i = 0; i < managers.Length && _unlockItem == null; i++)
+            {
+                if (managers[i] == null) continue;
+                _unlockItem = managers[i].SlotUnlockItem;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[DualScreen] slot unlock item unavailable: " + e.Message);
+        }
+        return _unlockItem;
+    }
+
+    static CollectableItem _unlockItem;
+    static float _nextUnlockSearch;
 
     // ── map markers ─────────────────────────────────────────────────────────
 

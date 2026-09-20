@@ -51,6 +51,13 @@ public class DsSection
 {
     public string Title;
     public Color Colour;
+    /// <summary>
+    /// The game's own divider art for this group, drawn INSTEAD of the title
+    /// and rule. The tool list has one per type -- a hairline with the type's
+    /// glyph in the middle -- and it says what a word would, in the game's hand.
+    /// </summary>
+    public Sprite Icon;
+    public Color IconColour;
     public readonly List<DsItem> Items = new List<DsItem>();
 
     public DsSection(string title, Color colour) { Title = title; Colour = colour; }
@@ -447,35 +454,68 @@ public class DsIconGrid
             var sec = _sections[s];
             if (sec.Items.Count == 0) continue;
 
-            if (!string.IsNullOrEmpty(sec.Title))
+            if (!string.IsNullOrEmpty(sec.Title) || sec.Icon != null)
             {
                 if (y > 0f) y += sectionGap;
 
-                // A blank title means "cap only" -- a divider is enough to say
-                // two groups are different without naming them.
-                bool titled = sec.Title.Trim().Length > 0;
-                float headH = (titled ? HeaderTitleH : 0f) + HeaderRuleH;
-
                 var head = DsWidgets.Rect(_grid, "head" + s);
-                DsWidgets.Place(head, 0f, y, _gridW, headH);
 
-                if (titled)
+                if (sec.Icon != null)
                 {
-                    var label = DsWidgets.Label(head, "t", sec.Title, DsTheme.BodySize,
-                                                sec.Colour, TmpAlign.Left, display: true);
-                    if (label != null) DsWidgets.Place(label.rectTransform, 4f, 0f, 340f, 38f);
+                    // The game's own divider: one piece of art carrying both the
+                    // line and the group's glyph, so there is no title and no
+                    // rule to draw beside it.
+                    //
+                    // The height follows the art's OWN aspect at the column's
+                    // width, and is not clamped up to a comfortable band. That
+                    // was the first attempt and it drew nothing at all:
+                    // preserveAspect fits the art INSIDE its rect, so a wide
+                    // thin divider given a taller rect keeps its width and
+                    // stays its own hairline height -- while a rect forced to a
+                    // minimum simply put empty space around it. Whatever the
+                    // art's proportions, they are the divider's proportions.
+                    var r = sec.Icon.rect;
+                    float aspect = r.height / Mathf.Max(r.width, 1f);
+                    float headH = Mathf.Clamp(_gridW * aspect, 6f, 120f);
+
+                    DsWidgets.Place(head, 0f, y, _gridW, headH);
+                    var art = DsWidgets.Icon(head, "art", sec.Icon, sec.IconColour);
+                    art.preserveAspect = true;
+                    DsWidgets.Stretch(art.rectTransform);
+
+                    _headers.Add(head);
+                    _headerY.Add(y);
+                    _headerH.Add(headH);
+                    y += headH;
                 }
+                else
+                {
+                    // A blank title means "cap only" -- a divider is enough to
+                    // say two groups are different without naming them.
+                    bool titled = sec.Title.Trim().Length > 0;
+                    float headH = (titled ? HeaderTitleH : 0f) + HeaderRuleH;
 
-                // Starts on the gutter rule, not inside the column, so the cap's
-                // tick meets the line it belongs to. The label stays inside.
-                DsWidgets.SectionRule(head, "rule", -_capReach,
-                                      (titled ? HeaderTitleH : 0f) + HeaderRuleH * 0.5f,
-                                      _gridW + _capReach, sec.Colour);
+                    DsWidgets.Place(head, 0f, y, _gridW, headH);
 
-                _headers.Add(head);
-                _headerY.Add(y);
-                _headerH.Add(headH);
-                y += headH;
+                    if (titled)
+                    {
+                        var label = DsWidgets.Label(head, "t", sec.Title, DsTheme.BodySize,
+                                                    sec.Colour, TmpAlign.Left, display: true);
+                        if (label != null) DsWidgets.Place(label.rectTransform, 4f, 0f, 340f, 38f);
+                    }
+
+                    // Starts on the gutter rule, not inside the column, so the
+                    // cap's tick meets the line it belongs to. The label stays
+                    // inside.
+                    DsWidgets.SectionRule(head, "rule", -_capReach,
+                                          (titled ? HeaderTitleH : 0f) + HeaderRuleH * 0.5f,
+                                          _gridW + _capReach, sec.Colour);
+
+                    _headers.Add(head);
+                    _headerY.Add(y);
+                    _headerH.Add(headH);
+                    y += headH;
+                }
             }
 
             for (int i = 0; i < sec.Items.Count; i++, flatIndex++)

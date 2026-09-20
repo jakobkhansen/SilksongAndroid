@@ -76,6 +76,11 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
 
     readonly DsIconGrid _grid = new DsIconGrid();
     readonly List<Image> _slots = new List<Image>();
+    /// <summary>Whether each drawn slot is still locked, and which crest slot it is.</summary>
+    readonly List<bool> _slotLocked = new List<bool>();
+    readonly List<int> _slotIndex = new List<int>();
+    /// <summary>The locked slot the cursor is on, as an index into the lists above.</summary>
+    int _lockedPick = -1;
     readonly List<ToolItem> _slotTools = new List<ToolItem>();
     readonly List<RectTransform> _slotRects = new List<RectTransform>();
 
@@ -340,7 +345,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                 catch { }
 
                 AddSlot(x, y, SlotIcon, DsTheme.ToolTypeColor(info.Type),
-                        locked ? null : tool, info.Type, locked);
+                        locked ? null : tool, info.Type, locked, i);
             }
         }
 
@@ -405,15 +410,37 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     /// its SpriteTint and LOCKED_SLOT_SCALE.
     /// </summary>
     void AddSlot(float x, float y, float size, Color ringColour, ToolItem tool,
-                 ToolItemType type, bool locked)
+                 ToolItemType type, bool locked, int index = -1)
     {
         var holder = DsWidgets.Rect(_crestBox, "slot" + _slotRects.Count);
         DsWidgets.Place(holder, x, y, size, size);
 
+        // A locked socket is not a slot drawn grey: the game shows a small
+        // broken ring with a dot at its centre and NOTHING else -- no coloured
+        // ring, no type symbol -- which reads as a fitting with no socket in it
+        // rather than as a socket that happens to be empty. Drawn small and
+        // centred, at the game's own grey.
+        if (locked)
+        {
+            var glyph = DsGameArt.LockedSocketSymbol();
+            var mark = DsWidgets.Icon(holder, "locked", glyph, LockedGrey);
+            mark.preserveAspect = true;
+            if (glyph != null) DsWidgets.FitCentred(mark, glyph, size * 0.5f, size * 0.5f);
+            else DsWidgets.Stretch(mark.rectTransform, size * 0.30f);
+            mark.color = LockedGrey;
+
+            _slots.Add(mark);
+            _slotTools.Add(null);
+            _slotRects.Add(holder);
+            _slotLocked.Add(true);
+            _slotIndex.Add(index);
+            return;
+        }
+
         // Round, because the game's slots are round and a square frame around a
         // round icon reads as a different kind of thing. The ring's colour says
         // what may go in the slot, which is useful even when it is empty.
-        var ring = DsWidgets.Circle(holder, "ring", locked ? LockedGrey : ringColour);
+        var ring = DsWidgets.Circle(holder, "ring", ringColour);
         DsWidgets.Stretch(ring.rectTransform);
         var inner = DsWidgets.Circle(ring.rectTransform, "inner", DsTheme.Panel);
         DsWidgets.Stretch(inner.rectTransform, 5f);
@@ -426,11 +453,8 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         if (icon == null)
         {
             icon = DsGameArt.CrestSlotSymbol(type);
-            tint = locked ? LockedGrey : ringColour;
-            // Locked slots are drawn smaller, so the inset grows rather than the
-            // rect shrinking -- the ring around it must stay the slot's size.
-            if (locked) inset += size * 0.10f;
-            else inset += size * 0.04f;
+            tint = ringColour;
+            inset += size * 0.04f;
         }
 
         var img = DsWidgets.Icon(inner.rectTransform, "icon", icon, tint);
@@ -438,9 +462,10 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         DsWidgets.Stretch(img.rectTransform, inset);
 
         _slots.Add(img);
-        // A locked slot holds nothing and must not answer taps with a tool.
-        _slotTools.Add(locked ? null : tool);
+        _slotTools.Add(tool);
         _slotRects.Add(holder);
+        _slotLocked.Add(false);
+        _slotIndex.Add(index);
     }
 
     static readonly Color LockedGrey = new Color(0.5f, 0.5f, 0.5f, 1f);
@@ -450,6 +475,8 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         for (int i = 0; i < _slotRects.Count; i++)
             if (_slotRects[i] != null) UnityEngine.Object.Destroy(_slotRects[i].gameObject);
         _slots.Clear(); _slotTools.Clear(); _slotRects.Clear();
+        _slotLocked.Clear(); _slotIndex.Clear();
+        _lockedPick = -1;
     }
 
     // ── the tool list ───────────────────────────────────────────────────────
@@ -464,6 +491,12 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         ToolItemType.Skill, ToolItemType.Red, ToolItemType.Blue, ToolItemType.Yellow
     };
 
+    /// <summary>
+    /// The words the groups used to carry, kept for the moment before the
+    /// game's own dividers are readable -- the pane they live on is built when
+    /// the player first opens the game's inventory, and until then there is
+    /// nothing to read. See DsGameArt.ToolSectionDivider.
+    /// </summary>
     static string GroupTitle(ToolItemType t)
     {
         switch (t)
@@ -482,6 +515,25 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         for (int i = 0; i < Groups.Length; i++)
         {
             var sec = new DsSection(GroupTitle(Groups[i]), DsTheme.ToolTypeColor(Groups[i]));
+            // The game's own divider when it can be had, which drops the word:
+            // the glyph on it is what the game shows and it is already in the
+            // right colour. The title stays as the fallback.
+            var art = DsGameArt.ToolSectionDivider(Groups[i]);
+            if (art.Ok)
+            {
+                sec.Icon = art.Sprite;
+                // The renderer's RGB, never its alpha. These headers hang off a
+                // NestedFadeGroup, which is how the game fades the whole pane
+                // in -- so while its inventory is closed the alpha is zero, and
+                // taking the colour whole gave four invisible dividers and no
+                // titles either, since the art was found and simply not seen.
+                var c = art.Colour;
+                sec.IconColour = new Color(c.r, c.g, c.b, 1f);
+                // A colour that carries no light at all is not a tint the game
+                // meant; fall back to the type's own.
+                if (c.r + c.g + c.b < 0.05f)
+                    sec.IconColour = DsTheme.ToolTypeColor(Groups[i]);
+            }
             buckets[Groups[i]] = sec;
             sections.Add(sec);
         }
@@ -570,7 +622,11 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         {
             var rt = _slotRects[i];
             var tool = _slotTools[i];
-            if (rt == null || tool == null) continue;
+            // A LOCKED slot answers taps too, and holds no tool: it is the one
+            // thing on this screen you select in order to act on the slot
+            // itself rather than on what is in it.
+            bool locked = i < _slotLocked.Count && _slotLocked[i];
+            if (rt == null || (tool == null && !locked)) continue;
 
             // Slots live inside the crest panel, which is itself placed at
             // (LeftX, 16) within the body, so their layout position is the sum.
@@ -579,6 +635,21 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
             float size = rt.sizeDelta.x;
             if (p.x >= sx && p.x <= sx + size && p.y >= sy && p.y <= sy + size)
             {
+                if (locked)
+                {
+                    _lockedPick = i;
+                    _socketTool = null;
+                    // Nothing in the list is chosen while a socket is, and the
+                    // description says what the slot is rather than naming a
+                    // tool that is not there.
+                    _grid.ShowDetail(LockedSlotName, LockedSlotDesc());
+                    _grid.SetExternalTarget(
+                        new Rect(sx, sy - bodyTop, size, size),
+                        LockedGrey, "locked:" + i);
+                    return;
+                }
+
+                _lockedPick = -1;
                 // Select it in the list, so the description pane fills and the
                 // grid knows what is chosen...
                 _grid.SelectByKey(tool.name);
@@ -767,6 +838,23 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         into.Add(new DsAction("CREST", () => ShowCrestPicker(true), false,
                               DsActionPlace.Pane));
 
+        // A locked socket replaces EQUIP with the only thing that can be done
+        // to it. Shown greyed rather than withdrawn when there is nothing to
+        // spend, which is the game's own treatment -- InventoryToolCrestSlot
+        // draws the prompt either way and reads manager.CanUnlockSlot to decide
+        // whether it responds. It is also the more useful of the two: "this
+        // needs a Memory Locket" is worth knowing, and a button that simply
+        // vanished would leave the socket looking like a dead end.
+        int locked = LockedPick();
+        if (locked >= 0)
+        {
+            bool can = CanUnlockSocket();
+            into.Add(new DsAction("UNLOCK",
+                                  can ? (Action)(() => UnlockSocket(locked)) : null,
+                                  !can, DsActionPlace.Pane));
+            return;
+        }
+
         var tool = SelectedTool();
         if (tool == null) return;
 
@@ -827,9 +915,126 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         if (!string.IsNullOrEmpty(key))
         {
             _socketTool = null;
+            // Choosing anything in the list is also choosing to stop looking at
+            // a locked socket, and UNLOCK must go with it.
+            _lockedPick = -1;
             try { return ToolItemManager.GetToolByName(key); } catch { return null; }
         }
         return _socketTool;
+    }
+
+    // ── unlocking a socket ──────────────────────────────────────────────────
+
+    const string LockedSlotName = "Locked Socket";
+
+    /// <summary>
+    /// What the description pane says about a locked socket, including how many
+    /// of the unlock item are left -- which is the thing you actually want to
+    /// know before spending one.
+    /// </summary>
+    string LockedSlotDesc()
+    {
+        var item = DsGameArt.SlotUnlockItem();
+        int have = 0;
+        string name = "Memory Locket";
+        if (item != null)
+        {
+            try { have = item.CollectedAmount; } catch { }
+            try
+            {
+                string display = item.GetDisplayName(CollectableItem.ReadSource.Inventory);
+                if (!string.IsNullOrWhiteSpace(display)) name = display;
+            }
+            catch { }
+        }
+
+        return have > 0
+            ? "This socket can be opened with a " + name + ".\n\nYou have " + have + "."
+            : "This socket needs a " + name + " to open.\n\nYou have none.";
+    }
+
+    /// <summary>
+    /// Whether a socket can be opened right now, which is the game's own test:
+    /// InventoryItemToolManager.CanUnlockSlot is `slotUnlockItem.CollectedAmount
+    /// > 0` and nothing else.
+    /// </summary>
+    bool CanUnlockSocket()
+    {
+        var item = DsGameArt.SlotUnlockItem();
+        if (item == null) return false;
+        try { return item.CollectedAmount > 0; } catch { return false; }
+    }
+
+    /// <summary>The locked socket under the cursor, or -1.</summary>
+    int LockedPick()
+    {
+        if (_lockedPick < 0 || _lockedPick >= _slotLocked.Count) return -1;
+        if (!_slotLocked[_lockedPick]) return -1;
+        // Superseded by a choice in the list.
+        if (!string.IsNullOrEmpty(_grid.SelectedKey)) return -1;
+        return _lockedPick;
+    }
+
+    /// <summary>
+    /// Open the socket, which is the whole of what the game's own unlock
+    /// coroutine does to the save:
+    ///
+    ///     ToolCrestsData.SlotData saveData = SaveData;
+    ///     saveData.IsUnlocked = true;
+    ///     SaveData = saveData;
+    ///     manager.SlotUnlockItem.Take(1, showCounter: false);
+    ///
+    /// Everything else in that routine is the hold-to-open animation -- the
+    /// shake, the particles, the rumble -- and belongs to a pane we are not
+    /// drawing.
+    ///
+    /// The write-back is spelled out because SlotData is a STRUCT: reading it,
+    /// setting the flag and dropping it would change a copy and save nothing.
+    /// The list-growing is the game's too, from InventoryToolCrestSlot's own
+    /// setter, and it matters for a crest whose slots have never been written.
+    /// </summary>
+    void UnlockSocket(int drawnIndex)
+    {
+        if (drawnIndex < 0 || drawnIndex >= _slotIndex.Count) return;
+        int slot = _slotIndex[drawnIndex];
+        if (slot < 0) return;
+
+        var item = DsGameArt.SlotUnlockItem();
+        if (item == null) return;
+
+        try
+        {
+            if (item.CollectedAmount <= 0) return;
+
+            var crest = ToolItemManager.GetCrestByName(_crestId);
+            if (crest == null) return;
+
+            var pd = PlayerData.instance;
+            var data = pd.ToolEquips.GetData(crest.name);
+            var list = data.Slots;
+            if (list == null)
+            {
+                list = data.Slots = new List<ToolCrestsData.SlotData>();
+                pd.ToolEquips.SetData(crest.name, data);
+            }
+            while (list.Count < slot + 1) list.Add(default(ToolCrestsData.SlotData));
+
+            var sd = list[slot];
+            if (sd.IsUnlocked) return;       // already open; do not spend a second
+            sd.IsUnlocked = true;
+            list[slot] = sd;
+
+            item.Take(1, showCounter: false);
+            Debug.Log("[DualScreen] unlocked socket " + slot + " on " + crest.name);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[DualScreen] unlock failed: " + e.Message);
+            return;
+        }
+
+        _lockedPick = -1;
+        Refresh(force: true);
     }
 
     void Unequip(ToolItem tool)
@@ -872,12 +1077,32 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                 slots.Add(held != null ? held.name : string.Empty);
             }
 
+            // Which sockets are actually open. A locked one is not a candidate
+            // for anything: without this the panel would happily equip into a
+            // socket the player has not bought, which is both wrong and a
+            // quiet way to make the UNLOCK button pointless.
+            List<ToolCrestsData.SlotData> saved = null;
+            try { saved = crest.SaveData.Slots; } catch { }
+            var open = new bool[crest.Slots.Length];
+            for (int i = 0; i < crest.Slots.Length; i++)
+            {
+                bool locked = false;
+                try
+                {
+                    if (crest.Slots[i].IsLocked)
+                        locked = saved == null || i >= saved.Count || !saved[i].IsUnlocked;
+                }
+                catch { }
+                open[i] = !locked;
+            }
+
             int target = -1;
             if (tool.Type == ToolItemType.Skill)
             {
                 // Skills go in the one neutral skill slot, not in any of them.
                 for (int i = 0; i < crest.Slots.Length; i++)
                 {
+                    if (!open[i]) continue;
                     if (crest.Slots[i].Type == ToolItemType.Skill &&
                         crest.Slots[i].AttackBinding == AttackToolBinding.Neutral)
                     { target = i; break; }
@@ -890,7 +1115,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                 int lastOfType = -1, firstFree = -1;
                 for (int i = 0; i < crest.Slots.Length; i++)
                 {
-                    if (crest.Slots[i].Type != tool.Type) continue;
+                    if (!open[i] || crest.Slots[i].Type != tool.Type) continue;
                     lastOfType = i;
                     if (string.IsNullOrEmpty(slots[i])) firstFree = i;
                 }
