@@ -136,9 +136,19 @@ public class DsShell
         DsWidgets.HRule(_header, "rule", DsTheme.Pad, _layout.Hud.height,
                         _w - DsTheme.Pad * 2f);
 
-        // Built into the header, after the HUD, so its labels draw over the
-        // ground rather than under the health's render texture.
-        _actions.Build(_header, _w);
+        // Its own host, covering the panel, rather than the header it used to
+        // live in: the bar now draws in two corners -- the header band and,
+        // for actions that act on the selection, the bottom of a screen's
+        // description column -- and no single band contains both.
+        //
+        // Created here rather than on demand so its place in the draw order is
+        // fixed: after the HUD, so its labels are over the ground rather than
+        // under the health's render texture, and before the tab strip and the
+        // title card, so neither is ever drawn under a button.
+        var actionHost = DsWidgets.Rect(_root, "actions");
+        DsWidgets.Place(actionHost, 0f, 0f, _w, _h);
+        // The header band, which its buttons are spread down.
+        _actions.Build(actionHost, _w, _layout.Hud.height);
 
         // The screen's name, beside the silk bar. Placed per frame rather than
         // here: the space it sits in depends on the player's maximum silk and
@@ -793,9 +803,24 @@ public class DsShell
         var source = e.Screen as IDsActionBar;
         if (source == null) { _actions.Clear(); return; }
 
+        // Nothing while the content is still moving. A Pane action is pinned to
+        // a COLUMN of the screen it belongs to, and drawing it at that column's
+        // final position while the column is still sliding under it reads as a
+        // button that has come detached. Three hundred milliseconds later it
+        // arrives with the thing it acts on, which is what it is for.
+        if (Sliding) { _actions.Clear(); return; }
+
         _actionBuffer.Clear();
-        Guard(e, () => source.CollectActions(_actionBuffer));
-        _actions.Set(_actionBuffer);
+        // Both inside the guard: a screen that throws while saying where its
+        // buttons go is as broken as one that throws while listing them, and
+        // the fallback for either is an empty bar rather than a stale one.
+        Rect pane = default(Rect);
+        Guard(e, () =>
+        {
+            source.CollectActions(_actionBuffer);
+            pane = source.ActionPane;
+        });
+        _actions.Set(_actionBuffer, pane);
     }
 
     public void OnGesture(DsGesture g)

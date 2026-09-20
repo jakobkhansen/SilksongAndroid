@@ -212,9 +212,30 @@ public class DsInventoryScreen : DsGridScreen, IDsActionBar
     // cap hanging in mid-air.
     protected override float CapReach => GridX - (LeftX + LeftW + GridX) * 0.5f;
 
+    // The bottom of the description column, kept for the USE button.
+    //
+    // Reserved whether or not there is anything to put in it, which is
+    // deliberate: USE comes and goes with the selection, and a description that
+    // reflowed every time the cursor moved between a rosary and a relic would
+    // be doing something far more distracting than leaving a gap. A short
+    // description -- which is nearly all of them -- leaves the space empty
+    // anyway, and that is where the button appears.
+    static readonly float ActionBand = DsActionBar.PaneBand(1);
+
+    static float ColumnHeight => DsLayout.Current.Body.height - DsTheme.Pad * 2f;
+
     protected override Rect DetailRect =>
-        new Rect(DetailX, DsTheme.Pad, DetailW,
-                 DsLayout.Current.Body.height - DsTheme.Pad * 2f);
+        new Rect(DetailX, DsTheme.Pad, DetailW, ColumnHeight - ActionBand);
+
+    /// <summary>
+    /// USE sits under the prose about the thing it would consume. See
+    /// DsActions: this is a control that acts on the SELECTION, so it belongs
+    /// with the selection rather than in the corner with the screen's own
+    /// controls.
+    /// </summary>
+    public Rect ActionPane =>
+        DsLayout.Current.InBody(
+            new Rect(DetailX, DsTheme.Pad + ColumnHeight - ActionBand, DetailW, ActionBand));
 
     public override void Build(RectTransform host)
     {
@@ -350,7 +371,8 @@ public class DsInventoryScreen : DsGridScreen, IDsActionBar
         // IS a thing you drink; that it would do nothing at this moment is
         // worth saying, and it is what the game says too -- it draws the same
         // prompt greyed (forceDisabled) instead of removing it.
-        into.Add(new DsAction("USE", now ? (Action)(() => Consume(item)) : null, !now));
+        into.Add(new DsAction("USE", now ? (Action)(() => Consume(item)) : null, !now,
+                              DsActionPlace.Pane));
     }
 
     CollectableItem SelectedCollectable()

@@ -52,6 +52,15 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     const float ListW   = 350f;
     const float DetailX = 900f;   // prose: 900 .. 1220
     const float DetailW = 320f;
+    /// <summary>Where the three columns start, below the body's top padding.</summary>
+    const float DetailTop = 16f;
+    // The bottom of the description column, kept for CREST and EQUIP/UNEQUIP.
+    //
+    // Room for TWO rows, because at a bench with a tool selected that is what
+    // is offered. Reserved whether or not they are showing: the pair comes and
+    // goes with the bench and with the selection, and a description that
+    // reflowed each time would be worse than a gap that does not move.
+    static readonly float ActionBand = DsActionBar.PaneBand(2);
     const int   ListColumns = 3;
     const float SlotIcon = 82f;
     const float ExtraIcon = 74f;
@@ -88,7 +97,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     {
         _host = host;
         float bodyH = DsLayout.Current.Body.height;
-        float colH = bodyH - 36f;
+        float colH = ColumnHeight;
 
         // The crest has its whole column now that the description has one of
         // its own, so the ring is fitted to the full height rather than to the
@@ -120,7 +129,8 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         // beside it is already the boundary. The section caps reach back half a
         // gutter so they sit on the rule between the crest and the tools.
         _grid.Build(host, ListColumns, ListX, ListW,
-                    new Rect(DetailX, 16f, DetailW, colH), detailRule: false,
+                    new Rect(DetailX, DetailTop, DetailW, colH - ActionBand),
+                    detailRule: false,
                     capReach: ListX - (LeftX + LeftW + ListX) * 0.5f);
 
         Refresh(force: true);
@@ -749,11 +759,13 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         // thing to be able to do.
         if (_choosingCrest)
         {
-            into.Add(new DsAction("BACK", () => ShowCrestPicker(false)));
+            into.Add(new DsAction("BACK", () => ShowCrestPicker(false), false,
+                                  DsActionPlace.Pane));
             return;
         }
 
-        into.Add(new DsAction("CREST", () => ShowCrestPicker(true)));
+        into.Add(new DsAction("CREST", () => ShowCrestPicker(true), false,
+                              DsActionPlace.Pane));
 
         var tool = SelectedTool();
         if (tool == null) return;
@@ -761,9 +773,31 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         bool equipped = false;
         try { equipped = ToolItemManager.IsToolEquipped(tool.name); } catch { }
 
+        // Second, so it lands at the BOTTOM of the strip: it is the one that
+        // acts on what the cursor is actually on, and the nearest the thumb.
         into.Add(equipped
-            ? new DsAction("UNEQUIP", () => Unequip(tool))
-            : new DsAction("EQUIP", () => Equip(tool)));
+            ? new DsAction("UNEQUIP", () => Unequip(tool), false, DsActionPlace.Pane)
+            : new DsAction("EQUIP", () => Equip(tool), false, DsActionPlace.Pane));
+    }
+
+    /// <summary>
+    /// The height of the three columns. One definition, because the detail
+    /// column's own rect and the strip pinned to its bottom are worked out in
+    /// different places and must agree to the pixel.
+    /// </summary>
+    static float ColumnHeight => DsLayout.Current.Body.height - 36f;
+
+    /// <summary>
+    /// The buttons sit under the prose about the tool they act on. See
+    /// DsActions for why these are Pane actions and the map's are not.
+    /// </summary>
+    public Rect ActionPane
+    {
+        get
+        {
+            return DsLayout.Current.InBody(
+                new Rect(DetailX, DetailTop + ColumnHeight - ActionBand, DetailW, ActionBand));
+        }
     }
 
     /// <summary>

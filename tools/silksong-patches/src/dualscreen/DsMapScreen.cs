@@ -66,6 +66,13 @@ public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle, IDsTabStrip
     int _markerPick = -1;
     readonly List<int> _stripTypes = new List<int>();
     float _holdUntil;
+    // When the player last did something to the map, for the RESET button's
+    // fade. Unscaled, because the game holds timeScale at zero while its own
+    // menu -- and so this panel -- is open.
+    float _lastTouch;
+    /// <summary>How long RESET stays solid after the last touch, then fades over.</summary>
+    const float ResetHold = 3f;
+    const float ResetFade = 0.6f;
     MapZone _zone = MapZone.NONE;
     float _nextSymbolHunt;
     float _nextHeader;
@@ -404,6 +411,12 @@ public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle, IDsTabStrip
 
         if (_state != State.Map) return;
 
+        // Any touch on the map counts as interaction, whether or not it moves
+        // anything: RESET fades on a timer, and reaching for the map is exactly
+        // when the player wants it back. Taken before the marker-mode return
+        // below, so pinning a marker keeps it alive too.
+        if (_mapRect.Contains(p)) _lastTouch = Time.unscaledTime;
+
         // Placing and removing happen on a tap; pan and zoom fall through below,
         // which is what keeps the map usable while pinning.
         if (_markerMode && g.Type == DsGestureType.Tap) { MarkerTap(p); return; }
@@ -573,11 +586,61 @@ public class DsMapScreen : IDsScreen, IDsActionBar, IDsHeaderTitle, IDsTabStrip
         into.Add(new DsAction(
             _view.Mode == DsMapView.Frame.World ? "AREA MAP" : "FULL MAP",
             ToggleMode));
-        into.Add(new DsAction("RESET", () => _view.ResetView()));
         // Only where there is a map to pin things to, and only once the player
         // has actually found a pin to place.
         if (_state == State.Map && AnyMarkerUnlocked())
             into.Add(new DsAction("MARKERS", () => SetMarkerMode(true)));
+
+        // RESET is not like the two above. They change what the map IS -- which
+        // is always a thing you might want -- while this one only undoes a pan
+        // or a pinch, so it is offered only once there is something to undo,
+        // and at the BOTTOM of the panel rather than beside them.
+        //
+        // And then it FADES. Leaving the map parked somewhere deliberate is a
+        // normal thing to do -- reading a route, watching for a bench -- and a
+        // button sitting over the corner of the map for as long as you look at
+        // it is exactly what this panel is trying not to be. A few seconds
+        // after the last touch it goes; the next touch brings it back, which is
+        // the moment you might want it.
+        float alpha = ResetAlpha();
+        if (alpha > 0f && _view.ViewMoved)
+            into.Add(new DsAction("RESET", () => _view.ResetView(), false,
+                                  DsActionPlace.Pane, alpha));
+    }
+
+    /// <summary>
+    /// How solid RESET should be right now: fully on until <see cref="ResetHold"/>
+    /// after the last touch, then out over <see cref="ResetFade"/>, then gone.
+    /// </summary>
+    float ResetAlpha()
+    {
+        // Never touched this session -- so the view is wherever it opened, and
+        // there is nothing to offer a way back from.
+        if (_lastTouch <= 0f) return 0f;
+
+        float since = Time.unscaledTime - _lastTouch;
+        if (since <= ResetHold) return 1f;
+        if (since >= ResetHold + ResetFade) return 0f;
+        return 1f - (since - ResetHold) / ResetFade;
+    }
+
+    /// <summary>
+    /// The bottom-right corner of the body.
+    ///
+    /// The map has no description column to hang a strip under -- it is one
+    /// surface, edge to edge -- so this is a corner of its own rather than a
+    /// band across anything. Narrow, because the one action that lands here is
+    /// a single short word.
+    /// </summary>
+    public Rect ActionPane
+    {
+        get
+        {
+            const float w = 220f, margin = 24f;
+            float h = DsActionBar.PaneBand(1);
+            var body = DsLayout.Current.Body;
+            return new Rect(body.xMax - w - margin, body.yMax - h - margin, w, h);
+        }
     }
 }
 #endif

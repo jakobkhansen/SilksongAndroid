@@ -310,6 +310,10 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     const float DetailBodySize = 32f;
     /// <summary>Where the description's prose starts, under the type and title.</summary>
     const float DescTop = 150f;
+    // The bottom of the description column, kept for the completed-quests
+    // toggle. Reserved whether or not there is anything finished to hide, so
+    // that the prose does not reflow the first time a quest is handed in.
+    static readonly float ActionBand = DsActionBar.PaneBand(1);
     const float Pad = DsTheme.Pad;
     // Room for the selection brackets to reach outside the cell they frame,
     // without the scroll mask clipping them off.
@@ -333,6 +337,12 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
 
     Rect _listRect;             // panel space, for hit-testing
     float _listTop, _listH;
+    /// <summary>
+    /// The description column's height, which is the list's less the strip at
+    /// its foot. The gutter rule beside it still runs the full depth -- it is
+    /// the boundary between two columns, and the button is inside one of them.
+    /// </summary>
+    float _detailH;
     float _scroll, _maxScroll;
     int _selected = -1;
     /// <summary>
@@ -365,6 +375,7 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
 
         _listTop = Pad;
         _listH = bodyH - Pad * 2f;
+        _detailH = _listH - ActionBand;
         _listRect = layout.InBody(new Rect(ListX, _listTop, ListW, _listH));
 
         // Cells are moved to scroll, so without clipping one scrolled past the
@@ -391,7 +402,7 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         DsWidgets.VRule(host, "split", (ListX + ListW + DetailX) * 0.5f, _listTop, _listH);
 
         _detail = DsWidgets.Rect(host, "detail");
-        DsWidgets.Place(_detail, DetailX, _listTop, detailW, _listH);
+        DsWidgets.Place(_detail, DetailX, _listTop, detailW, _detailH);
 
         // The description repeats the cell's own two lines, type above name, so
         // that reading across from a selection lands on the same words in the
@@ -412,7 +423,7 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
         _desc = DsWidgets.Label(_detail, "desc", "", DetailBodySize,
                                 DsTheme.InkDim, TmpAlign.TopLeft);
         if (_desc != null)
-            DsWidgets.Place(_desc.rectTransform, 0f, DescTop, detailW, _listH - 162f);
+            DsWidgets.Place(_desc.rectTransform, 0f, DescTop, detailW, _detailH - 162f);
 
         _detailW = detailW;
         _iconBand = DsWidgets.Rect(_detail, "desc-icons");
@@ -454,7 +465,23 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
     {
         if (_completedCount <= 0) return;
         into.Add(new DsAction(_showCompleted ? "HIDE COMPLETED" : "SHOW COMPLETED",
-                              ToggleCompleted));
+                              ToggleCompleted, false, DsActionPlace.Pane));
+    }
+
+    /// <summary>
+    /// The toggle sits at the bottom of the description column, where every
+    /// other screen's selection controls are. See DsActions.
+    /// </summary>
+    public Rect ActionPane
+    {
+        get
+        {
+            var layout = DsLayout.Current;
+            float detailW = layout.Width - DetailX - Pad;
+            float h = layout.Body.height - Pad * 2f;
+            return layout.InBody(
+                new Rect(DetailX, Pad + h - ActionBand, detailW, ActionBand));
+        }
     }
 
     void ToggleCompleted()
@@ -1682,7 +1709,7 @@ public class DsTasksScreen : IDsScreen, IDsActionBar
             try { textH = _desc.GetPreferredValues(_desc.text, _detailW, 0f).y; } catch { }
         }
         float top = DescTop + Mathf.Max(0f, textH) + DescIconTop;
-        float limit = DescTop + (_listH - 162f) - bandH;
+        float limit = DescTop + (_detailH - 162f) - bandH;
         if (top > limit) top = Mathf.Max(DescTop, limit);
 
         DsWidgets.Place(_iconBand, 0f, top, _detailW, bandH);

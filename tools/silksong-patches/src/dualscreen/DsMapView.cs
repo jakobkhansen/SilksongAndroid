@@ -414,6 +414,15 @@ public class DsMapView
             _nextAssert = 0f;
             _pan = Vector2.zero;
             _zoom = 1f;
+            // The full map's latched framing belongs to the map it was measured
+            // from, so it goes with it. Without this, loading another save
+            // while in full-map mode reopened it at the PREVIOUS save's frame:
+            // Aim kept the old _worldHalf and centre, and since pan and zoom
+            // had just been zeroed the view also looked untouched, so RESET --
+            // which is now offered only when the player has moved something --
+            // was not there to recover with either.
+            _worldLatched = false;
+            _worldAreas = 0;
             _forceAssert = true;
             _zoneBoundsOk = false;
             _lastDropped = 0;
@@ -1681,6 +1690,21 @@ public class DsMapView
     public void ResetPan() { _pan = Vector2.zero; }
 
     public void ResetZoom() { _zoom = 1f; }
+
+    /// <summary>
+    /// Whether the player has dragged or pinched away from the framing this
+    /// mode opens at.
+    ///
+    /// Exactly the condition under which RESET would do something, which is the
+    /// condition under which it is offered at all: on the area map, which is
+    /// where most of the time is spent, the panel stays clean. Both fields move
+    /// only in Pan, Zoom and the resets below, so this cannot answer yes to a
+    /// framing the player did not choose.
+    /// </summary>
+    public bool ViewMoved
+    {
+        get { return _pan != Vector2.zero || !Mathf.Approximately(_zoom, 1f); }
+    }
 
     /// <summary>
     /// Back to the framing this mode opens at.
