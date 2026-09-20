@@ -138,7 +138,11 @@ public class DsActionBar
     // group of related controls rather than a list of unrelated ones.
     const float PaneInsetX = 14f;
     const float PaneInsetY = 12f;
-    const float PaneGap = 12f;
+    // Enough air that two stacked buttons are not one target with a seam. These
+    // are thumb-sized plates spanning a column, so the pair sits closer to the
+    // eye than the header's ever do, and CREST and UNEQUIP do very different
+    // things to press by accident.
+    const float PaneGap = 22f;
 
     /// <summary>The height of a stack of <paramref name="rows"/> buttons.</summary>
     static float Block(int rows, float gap)

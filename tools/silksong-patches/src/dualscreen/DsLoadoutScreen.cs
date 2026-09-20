@@ -79,6 +79,8 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     /// <summary>Whether each drawn slot is still locked, and which crest slot it is.</summary>
     readonly List<bool> _slotLocked = new List<bool>();
     readonly List<int> _slotIndex = new List<int>();
+    /// <summary>Each drawn slot's type colour, for the cursor that lands on it.</summary>
+    readonly List<Color> _slotColour = new List<Color>();
     /// <summary>The locked slot the cursor is on, as an index into the lists above.</summary>
     int _lockedPick = -1;
     readonly List<ToolItem> _slotTools = new List<ToolItem>();
@@ -434,6 +436,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
             _slotRects.Add(holder);
             _slotLocked.Add(true);
             _slotIndex.Add(index);
+            _slotColour.Add(LockedGrey);
             return;
         }
 
@@ -466,6 +469,13 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         _slotRects.Add(holder);
         _slotLocked.Add(false);
         _slotIndex.Add(index);
+        _slotColour.Add(ringColour);
+    }
+
+    /// <summary>The colour the cursor takes on a given drawn slot.</summary>
+    Color SlotColour(int drawn)
+    {
+        return drawn >= 0 && drawn < _slotColour.Count ? _slotColour[drawn] : DsTheme.Ink;
     }
 
     static readonly Color LockedGrey = new Color(0.5f, 0.5f, 0.5f, 1f);
@@ -475,7 +485,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         for (int i = 0; i < _slotRects.Count; i++)
             if (_slotRects[i] != null) UnityEngine.Object.Destroy(_slotRects[i].gameObject);
         _slots.Clear(); _slotTools.Clear(); _slotRects.Clear();
-        _slotLocked.Clear(); _slotIndex.Clear();
+        _slotLocked.Clear(); _slotIndex.Clear(); _slotColour.Clear();
         _lockedPick = -1;
     }
 
@@ -622,11 +632,14 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         {
             var rt = _slotRects[i];
             var tool = _slotTools[i];
-            // A LOCKED slot answers taps too, and holds no tool: it is the one
-            // thing on this screen you select in order to act on the slot
-            // itself rather than on what is in it.
+            // Every socket answers a tap, whatever is or is not in it. A LOCKED
+            // one is selected in order to act on the socket itself; an EMPTY
+            // one has nothing to act on and nothing to say, and is still worth
+            // landing on -- it is how you see which sockets this crest has and
+            // which colour each one takes, and a socket you cannot put the
+            // cursor on reads as a picture rather than as part of the screen.
             bool locked = i < _slotLocked.Count && _slotLocked[i];
-            if (rt == null || (tool == null && !locked)) continue;
+            if (rt == null) continue;
 
             // Slots live inside the crest panel, which is itself placed at
             // (LeftX, 16) within the body, so their layout position is the sum.
@@ -635,6 +648,8 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
             float size = rt.sizeDelta.x;
             if (p.x >= sx && p.x <= sx + size && p.y >= sy && p.y <= sy + size)
             {
+                var where = new Rect(sx, sy - bodyTop, size, size);
+
                 if (locked)
                 {
                     _lockedPick = i;
@@ -643,13 +658,24 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                     // description says what the slot is rather than naming a
                     // tool that is not there.
                     _grid.ShowDetail(LockedSlotName, LockedSlotDesc());
-                    _grid.SetExternalTarget(
-                        new Rect(sx, sy - bodyTop, size, size),
-                        LockedGrey, "locked:" + i);
+                    _grid.SetExternalTarget(where, LockedGrey, "locked:" + i);
                     return;
                 }
 
                 _lockedPick = -1;
+
+                if (tool == null)
+                {
+                    // An empty socket. The cursor goes to it and the
+                    // description pane empties: there is no tool to describe,
+                    // and leaving the last one's prose up would attach it to a
+                    // socket that does not hold it.
+                    _socketTool = null;
+                    _grid.ShowDetail(string.Empty, string.Empty);
+                    _grid.SetExternalTarget(where, SlotColour(i), "empty:" + i);
+                    return;
+                }
+
                 // Select it in the list, so the description pane fills and the
                 // grid knows what is chosen...
                 _grid.SelectByKey(tool.name);
