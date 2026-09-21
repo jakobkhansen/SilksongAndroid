@@ -430,6 +430,69 @@ public static class DsTheme
         }
     }
 
+    static Sprite _chevron;
+
+    /// <summary>
+    /// A chevron pointing LEFT, generated once. Rotate it half a turn for the
+    /// other direction, which is what the crest picker does with it.
+    ///
+    /// Generated rather than borrowed, for the same reason the disc is. The
+    /// game HAS a pair of scroll arrows -- InventoryToolCrestList's
+    /// scrollLeftArrow and scrollRightArrow -- but they are BaseAnimators, so
+    /// the art is a frame of a clip and no field anywhere points at a sprite.
+    /// Finding one would mean dumping an atlas page and matching it by eye, for
+    /// a shape that is two strokes.
+    ///
+    /// Drawn as the set of pixels within half a stroke of either arm, which
+    /// gives mitred ends and a rounded point for free; the alternative, two
+    /// rotated bars, leaves a notch at the tip that is visible at this size.
+    /// </summary>
+    public static Sprite Chevron
+    {
+        get
+        {
+            if (_chevron != null) return _chevron;
+            const int size = 64;
+            const float stroke = 8f;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { name = "DsChevron" };
+            var px = new Color32[size * size];
+
+            var tip = new Vector2(size * 0.32f, size * 0.5f);
+            var top = new Vector2(size * 0.70f, size * 0.10f);
+            var bottom = new Vector2(size * 0.70f, size * 0.90f);
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    var p = new Vector2(x + 0.5f, y + 0.5f);
+                    float d = Mathf.Min(ToSegment(p, tip, top), ToSegment(p, tip, bottom));
+                    // One pixel of feather, as the rounded rect uses.
+                    float a = Mathf.Clamp01(stroke * 0.5f - d + 0.5f);
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+
+            tex.SetPixels32(px);
+            tex.Apply();
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.hideFlags = HideFlags.HideAndDontSave;
+            _chevron = Sprite.Create(tex, new UnityEngine.Rect(0, 0, size, size),
+                                     new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect);
+            _chevron.hideFlags = HideFlags.HideAndDontSave;
+            return _chevron;
+        }
+    }
+
+    /// <summary>Distance from a point to a line SEGMENT, not to its line.</summary>
+    static float ToSegment(Vector2 p, Vector2 a, Vector2 b)
+    {
+        Vector2 ab = b - a;
+        float len = ab.sqrMagnitude;
+        float t = len <= 0.0001f ? 0f : Mathf.Clamp01(Vector2.Dot(p - a, ab) / len);
+        return Vector2.Distance(p, a + ab * t);
+    }
+
     public static Sprite FindSprite(string name)
     {
         Sprite found;

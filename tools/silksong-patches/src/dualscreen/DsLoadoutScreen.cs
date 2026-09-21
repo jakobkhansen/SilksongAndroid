@@ -152,6 +152,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         // only act on at one, and leaving it open would offer crests that
         // tapping no longer changes.
         if (_choosingCrest && !AtBench()) ShowCrestPicker(false);
+        if (_choosingCrest) TickCrestPicker(dt);
 
         if (Time.unscaledTime >= _nextRefresh)
         {
@@ -293,47 +294,25 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         float cx = ringX + ringW * 0.5f;
         float cy = ringY + ringH * 0.5f;
 
-        Sprite art = null;
-        try { art = crest.CrestSprite; } catch { }
-
-        // Pixels per world unit, chosen so both the ring and the artwork fit.
-        float scale = float.MaxValue;
-
-        if (slots != null && slots.Length > 0)
-        {
-            float maxAbsX = 0f, maxAbsY = 0f;
-            for (int i = 0; i < slots.Length; i++)
-            {
-                var p = slots[i].Position;
-                maxAbsX = Mathf.Max(maxAbsX, Mathf.Abs(p.x));
-                maxAbsY = Mathf.Max(maxAbsY, Mathf.Abs(p.y));
-            }
-            if (maxAbsX > 0.0001f) scale = Mathf.Min(scale, (ringW - SlotIcon) * 0.5f / maxAbsX);
-            if (maxAbsY > 0.0001f) scale = Mathf.Min(scale, (ringH - SlotIcon) * 0.5f / maxAbsY);
-        }
-
-        Vector2 artWorld = art != null ? (Vector2)art.bounds.size : Vector2.zero;
-        if (artWorld.x > 0.0001f) scale = Mathf.Min(scale, ringW / artWorld.x);
-        if (artWorld.y > 0.0001f) scale = Mathf.Min(scale, ringH / artWorld.y);
-        if (scale == float.MaxValue || scale <= 0f) scale = 1f;
+        Vector2 artPx;
+        float scale = CrestScale(crest, ringW, ringH, SlotIcon, out artPx);
 
         if (_crestImage != null)
-        {
-            float aw = artWorld.x > 0.0001f ? artWorld.x * scale : 220f;
-            float ah = artWorld.y > 0.0001f ? artWorld.y * scale : 220f;
-            DsWidgets.Place(_crestImage.rectTransform, cx - aw * 0.5f, cy - ah * 0.5f, aw, ah);
-        }
+            DsWidgets.Place(_crestImage.rectTransform, cx - artPx.x * 0.5f, cy - artPx.y * 0.5f,
+                            artPx.x, artPx.y);
 
         if (slots != null)
         {
+            // What the game reads to fill a crest's sockets, rather than the
+            // same lookup written out again: InventoryToolCrest.GetEquippedForSlots
+            // is one call to this and a loop over the answer.
+            List<ToolItem> equipped = null;
+            try { equipped = ToolItemManager.GetEquippedToolsForCrest(crest.name); } catch { }
+
             for (int i = 0; i < slots.Length; i++)
             {
                 var info = slots[i];
-                ToolItem tool = null;
-                if (saved != null && i < saved.Count && !string.IsNullOrEmpty(saved[i].EquippedTool))
-                {
-                    try { tool = ToolItemManager.GetToolByName(saved[i].EquippedTool); } catch { }
-                }
+                ToolItem tool = equipped != null && i < equipped.Count ? equipped[i] : null;
 
                 // Positions are relative to the crest's origin, and game space
                 // has y up where our layout has y down.
@@ -357,6 +336,106 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         }
 
         AddExtraSlots();
+    }
+
+    /// <summary>
+    /// Pixels per crest-space unit that fits BOTH the slot ring and the
+    /// artwork inside w x h, and the artwork's pixel size at that scale.
+    ///
+    /// Shared by the tab and by the picker's cards so the two cannot drift: a
+    /// crest that sits correctly in one and off-centre in the other would look
+    /// like the picker showing a different crest.
+    /// </summary>
+    static float CrestScale(ToolCrest crest, float w, float h, float slotSize, out Vector2 artPx)
+    {
+        float scale = float.MaxValue;
+
+        ToolCrest.SlotInfo[] slots = null;
+        try { slots = crest != null ? crest.Slots : null; } catch { }
+        if (slots != null && slots.Length > 0)
+        {
+            float maxAbsX = 0f, maxAbsY = 0f;
+            for (int i = 0; i < slots.Length; i++)
+            {
+                var p = slots[i].Position;
+                maxAbsX = Mathf.Max(maxAbsX, Mathf.Abs(p.x));
+                maxAbsY = Mathf.Max(maxAbsY, Mathf.Abs(p.y));
+            }
+            if (maxAbsX > 0.0001f) scale = Mathf.Min(scale, (w - slotSize) * 0.5f / maxAbsX);
+            if (maxAbsY > 0.0001f) scale = Mathf.Min(scale, (h - slotSize) * 0.5f / maxAbsY);
+        }
+
+        Sprite art = null;
+        try { art = crest != null ? crest.CrestSprite : null; } catch { }
+        Vector2 world = art != null ? (Vector2)art.bounds.size : Vector2.zero;
+        if (world.x > 0.0001f) scale = Mathf.Min(scale, w / world.x);
+        if (world.y > 0.0001f) scale = Mathf.Min(scale, h / world.y);
+        if (scale == float.MaxValue || scale <= 0f) scale = 1f;
+
+        artPx = new Vector2(world.x > 0.0001f ? world.x * scale : 220f,
+                            world.y > 0.0001f ? world.y * scale : 220f);
+        return scale;
+    }
+
+    /// <summary>
+    /// A crest and the tools socketed into it, drawn into <paramref name="box"/>
+    /// with no bookkeeping -- nothing here can be selected, so none of it is
+    /// remembered. For the picker's cards; the tab's own crest is BuildSlots,
+    /// which needs every socket back to hit-test it.
+    /// </summary>
+    static void PaintCrest(RectTransform parent, ToolCrest crest, Rect box, float slotSize)
+    {
+        if (parent == null || crest == null) return;
+
+        Vector2 artPx;
+        float scale = CrestScale(crest, box.width, box.height, slotSize, out artPx);
+        float cx = box.x + box.width * 0.5f;
+        float cy = box.y + box.height * 0.5f;
+
+        Sprite art = null;
+        try { art = crest.CrestSprite; } catch { }
+        if (art != null)
+        {
+            var img = DsWidgets.Icon(parent, "art", art, Color.white);
+            DsWidgets.Place(img.rectTransform, cx - artPx.x * 0.5f, cy - artPx.y * 0.5f,
+                            artPx.x, artPx.y);
+            // The backdrop treatment the equipped crest gets, and for the same
+            // reason: what is IN the sockets is the thing being read here.
+            img.color = new Color(1f, 1f, 1f, CrestArtAlpha);
+        }
+
+        ToolCrest.SlotInfo[] slots = null;
+        try { slots = crest.Slots; } catch { }
+        if (slots == null) return;
+
+        List<ToolCrestsData.SlotData> saved = null;
+        try { saved = crest.SaveData.Slots; } catch { }
+
+        List<ToolItem> equipped = null;
+        try { equipped = ToolItemManager.GetEquippedToolsForCrest(crest.name); } catch { }
+
+        for (int i = 0; i < slots.Length; i++)
+        {
+            var info = slots[i];
+
+            bool locked = false;
+            try
+            {
+                if (info.IsLocked)
+                    locked = saved == null || i >= saved.Count || !saved[i].IsUnlocked;
+            }
+            catch { }
+
+            ToolItem tool = null;
+            if (!locked && equipped != null && i < equipped.Count) tool = equipped[i];
+
+            var holder = DsWidgets.Rect(parent, "slot" + i);
+            DsWidgets.Place(holder,
+                            cx + info.Position.x * scale - slotSize * 0.5f,
+                            cy - info.Position.y * scale - slotSize * 0.5f,
+                            slotSize, slotSize);
+            DrawSocket(holder, slotSize, DsTheme.ToolTypeColor(info.Type), tool, info.Type, locked);
+        }
     }
 
     /// <summary>
@@ -407,7 +486,25 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     }
 
     /// <summary>
-    /// One slot around the crest.
+    /// One slot around the crest, remembered so the cursor can land on it.
+    /// </summary>
+    void AddSlot(float x, float y, float size, Color ringColour, ToolItem tool,
+                 ToolItemType type, bool locked, int index = -1)
+    {
+        var holder = DsWidgets.Rect(_crestBox, "slot" + _slotRects.Count);
+        DsWidgets.Place(holder, x, y, size, size);
+
+        _slots.Add(DrawSocket(holder, size, ringColour, tool, type, locked));
+        _slotTools.Add(locked ? null : tool);
+        _slotRects.Add(holder);
+        _slotLocked.Add(locked);
+        _slotIndex.Add(index);
+        _slotColour.Add(locked ? LockedGrey : ringColour);
+    }
+
+    /// <summary>
+    /// One socket's art, and nothing else -- no bookkeeping, so the picker's
+    /// cards can use it too. Returns the Image carrying the socket's meaning.
     ///
     /// An empty slot is not an empty circle: the game draws the symbol for what
     /// the slot TAKES, tinted in that type's colour (InventoryToolCrestSlot
@@ -416,12 +513,9 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     /// which is again the game's own treatment rather than an invention -- see
     /// its SpriteTint and LOCKED_SLOT_SCALE.
     /// </summary>
-    void AddSlot(float x, float y, float size, Color ringColour, ToolItem tool,
-                 ToolItemType type, bool locked, int index = -1)
+    static Image DrawSocket(RectTransform holder, float size, Color ringColour,
+                            ToolItem tool, ToolItemType type, bool locked)
     {
-        var holder = DsWidgets.Rect(_crestBox, "slot" + _slotRects.Count);
-        DsWidgets.Place(holder, x, y, size, size);
-
         // A locked socket is a thick ring with a slit cut through it at top and
         // bottom and a dot at its centre, and NOTHING else -- no coloured ring,
         // no type symbol -- which reads as a fitting with no socket in it
@@ -440,13 +534,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                 DsWidgets.FitInk(mark, glyph, size * LockedSymbol, size * LockedSymbol);
             mark.color = LockedGrey;
 
-            _slots.Add(mark);
-            _slotTools.Add(null);
-            _slotRects.Add(holder);
-            _slotLocked.Add(true);
-            _slotIndex.Add(index);
-            _slotColour.Add(LockedGrey);
-            return;
+            return mark;
         }
 
         Sprite held = null;
@@ -469,13 +557,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                 DsWidgets.Stretch(mark.rectTransform, size * (1f - EmptySymbol) * 0.5f);
             mark.color = ringColour;
 
-            _slots.Add(mark);
-            _slotTools.Add(null);
-            _slotRects.Add(holder);
-            _slotLocked.Add(false);
-            _slotIndex.Add(index);
-            _slotColour.Add(ringColour);
-            return;
+            return mark;
         }
 
         // Round, because the game's slots are round and a square frame around a
@@ -493,12 +575,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         DsWidgets.FitInk(img, held, size * FilledInk, size * FilledInk);
         img.color = Color.white;
 
-        _slots.Add(img);
-        _slotTools.Add(tool);
-        _slotRects.Add(holder);
-        _slotLocked.Add(false);
-        _slotIndex.Add(index);
-        _slotColour.Add(ringColour);
+        return img;
     }
 
     /// <summary>
@@ -659,18 +736,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     public void OnGesture(DsGesture g)
     {
         // The picker covers the body, so nothing beneath it should see a tap.
-        if (_choosingCrest)
-        {
-            if (g.Type != DsGestureType.Tap) return;
-            Vector2 point = DsPresentation.ToLayout(g.Position);
-            for (int i = 0; i < _crestCells.Count; i++)
-            {
-                if (!_crestCells[i].Hit.Contains(point)) continue;
-                ChooseCrest(_crestCells[i].Id);
-                return;
-            }
-            return;
-        }
+        if (_choosingCrest) { PickerGesture(g); return; }
 
         // The grid handles everything on its own side, including scrolling and
         // selection, and ignores anything outside its own column.
@@ -759,21 +825,71 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     }
     // ── crest picker ────────────────────────────────────────────────────────
     //
+    // A carousel, because that is what the game has. InventoryToolCrestList
+    // lays every unlocked crest out in one row, keeps the chosen one centred by
+    // sliding the row under it (ScrollToCrestRoutine lerps the parent's x over
+    // 0.3 s), and shows an arrow on each side that has somewhere to go --
+    // `scrollLeftArrowGroup.FadeTo(currentCrestIndex > 0 ? 1 : 0)`. What was
+    // here before, a four-across grid of every crest at once, held the same
+    // crests and said nothing about which was chosen.
+    //
+    // Each card carries the crest's own sockets with the tools actually in
+    // them, which is the other half of what the game shows while switching:
+    // every InventoryToolCrest in its list calls GetEquippedForSlots, so you
+    // can see what a crest is carrying BEFORE you put it on.
+    //
     // A full-body overlay rather than a rearrangement of the tab. Showing and
     // hiding one opaque panel is a single toggle; hiding the tab's own parts
     // would mean reaching into the grid's clip, its detail pane and the two
     // gutter rules and putting them all back afterwards.
 
-    class CrestCell
+    class CrestCard
     {
-        public Rect Hit;              // layout space
         public string Id;
-        public Image Art;
         public RectTransform Root;
+        /// <summary>How strongly it is drawn; see DeselectedFade.</summary>
+        public CanvasGroup Fade;
     }
 
-    RectTransform _picker;
-    readonly List<CrestCell> _crestCells = new List<CrestCell>();
+    // The card, and how far apart two of them sit. The stride is WIDER than the
+    // card on purpose: it leaves each neighbour showing a sliver at the edge of
+    // the panel, which is what says the row continues, and it leaves a gap
+    // between that sliver and the centre card for the arrows to sit in.
+    const float CardW = 460f;
+    const float CardStride = 700f;
+    const float CardNameH = 58f;
+    const float CardDescH = 132f;
+    const float ArrowSize = 84f;
+    /// <summary>The crest's own sockets are drawn smaller here than on the tab.</summary>
+    const float CardSlotIcon = 84f;
+
+    /// <summary>
+    /// How long the row takes to carry one crest off and the next one on.
+    ///
+    /// The game's scrollTime is 0.3 s and the move is a plain linear lerp over
+    /// unscaled time, with no easing -- the same as InventoryCursor, and the
+    /// same as DsCursor for the same reason. A knob because it is a matter of
+    /// feel; 0 snaps.
+    /// </summary>
+    static float ScrollSeconds
+    {
+        get { return Mathf.Clamp(DsConfig.Int("crest_scroll_ms", 280), 0, 2000) / 1000f; }
+    }
+
+    /// <summary>
+    /// How a crest that is not the chosen one is drawn. The game dims it to
+    /// InventoryToolCrest.DeselectedColor -- a flat half grey -- and shrinks it
+    /// to its deselectedScale; on a black panel, fading is the same gesture and
+    /// needs no second colour.
+    /// </summary>
+    const float DeselectedFade = 0.4f;
+    const float DeselectedScale = 0.86f;
+
+    RectTransform _picker, _strip;
+    readonly List<CrestCard> _crestCards = new List<CrestCard>();
+    Image _arrowLeft, _arrowRight;
+    int _crestPick = -1;
+    float _stripFrom, _stripTo, _stripNow, _stripT = 1f;
     bool _choosingCrest;
 
     void ShowCrestPicker(bool on)
@@ -792,12 +908,25 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         {
             _picker = DsWidgets.Box(_host, "crest-picker", DsTheme.Ground).rectTransform;
             DsWidgets.Place(_picker, 0f, 0f, panelW, bodyH);
+
+            // The row is clipped to the panel, so a card on its way out is cut
+            // at the edge rather than drawn across the tab bar beside it.
+            var clip = DsWidgets.Rect(_picker, "clip");
+            DsWidgets.Place(clip, 0f, 0f, panelW, bodyH);
+            clip.gameObject.AddComponent<RectMask2D>();
+
+            _strip = DsWidgets.Rect(clip, "strip");
+
+            // After the clip, so they draw over the cards they point at.
+            _arrowLeft = MakeArrow("arrow-left", false, panelW, bodyH);
+            _arrowRight = MakeArrow("arrow-right", true, panelW, bodyH);
         }
         _picker.SetAsLastSibling();
 
-        for (int i = 0; i < _crestCells.Count; i++)
-            if (_crestCells[i].Root != null) UnityEngine.Object.Destroy(_crestCells[i].Root.gameObject);
-        _crestCells.Clear();
+        for (int i = 0; i < _crestCards.Count; i++)
+            if (_crestCards[i].Root != null) UnityEngine.Object.Destroy(_crestCards[i].Root.gameObject);
+        _crestCards.Clear();
+        _crestPick = -1;
 
         List<ToolCrest> crests = null;
         try { crests = ToolItemManager.GetAllCrests(); } catch { }
@@ -826,12 +955,6 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
         }
         Debug.Log(report.ToString());
 
-        const int columns = 4;
-        const float cellW = 280f, cellH = 205f, gap = 14f;
-        float left = (panelW - (columns * cellW + (columns - 1) * gap)) * 0.5f;
-        float top = 24f;
-        int shown = 0;
-
         foreach (var crest in crests)
         {
             if (crest == null) continue;
@@ -845,37 +968,200 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
             try { ok = crest.IsVisible; } catch { }
             if (!ok) continue;
 
-            int col = shown % columns, row = shown / columns;
-            float x = left + col * (cellW + gap);
-            float y = top + row * (cellH + gap);
-            if (y + cellH > bodyH) break;
-            shown++;
-
-            var cell = DsWidgets.Rect(_picker, "crest" + shown);
-            DsWidgets.Place(cell, x, y, cellW, cellH);
-
-            Sprite art = null;
-            try { art = crest.CrestSprite; } catch { }
-            var img = DsWidgets.Icon(cell, "art", art, Color.white);
-            DsWidgets.Place(img.rectTransform, (cellW - 140f) * 0.5f, 0f, 140f, 140f);
-
-            bool equipped = crest.name == current;
-            string label = "";
-            try { label = DsText(crest.DisplayName); } catch { }
-            var name = DsWidgets.Label(cell, "name", label, DsTheme.RowSize,
-                                       equipped ? DsTheme.Accent : DsTheme.Ink,
-                                       TmpAlign.Center);
-            if (name != null) DsWidgets.Place(name.rectTransform, 0f, 146f, cellW, 52f);
-
-            _crestCells.Add(new CrestCell
-            {
-                Id = crest.name,
-                Art = img,
-                Root = cell,
-                // The picker fills the body, so its space is the body's.
-                Hit = new Rect(x, DsLayout.Current.Body.y + y, cellW, cellH),
-            });
+            if (crest.name == current) _crestPick = _crestCards.Count;
+            _crestCards.Add(BuildCrestCard(crest, _crestCards.Count, bodyH));
         }
+
+        if (_crestPick < 0) _crestPick = 0;
+
+        // Opening it puts the crest you are wearing under the arrows without
+        // travelling to it: there is nowhere it could sensibly have come from.
+        _stripNow = _stripFrom = _stripTo = StripXFor(_crestPick);
+        _stripT = 1f;
+        ApplyStrip();
+    }
+
+    CrestCard BuildCrestCard(ToolCrest crest, int index, float bodyH)
+    {
+        float cardH = bodyH - 24f;
+
+        var root = DsWidgets.Rect(_strip, "crest" + index);
+        // By its CENTRE, so that shrinking an unchosen card leaves it where it
+        // was rather than dragging it toward its own top-left corner.
+        PlaceCentred(root, index * CardStride, 12f, CardW, cardH);
+        var fade = root.gameObject.AddComponent<CanvasGroup>();
+
+        // The body face: crest names are mixed case ("Hunter Crest").
+        string label = "";
+        try { label = DsText(crest.DisplayName); } catch { }
+        var name = DsWidgets.Label(root, "name", label, DsTheme.TitleSize,
+                                   DsTheme.Ink, TmpAlign.Center);
+        if (name != null) DsWidgets.Place(name.rectTransform, 0f, 0f, CardW, CardNameH);
+
+        string prose = "";
+        try { prose = DsText(crest.Description); } catch { }
+        var desc = DsWidgets.Label(root, "desc", prose, DsTheme.RowSize,
+                                   DsTheme.InkDim, TmpAlign.Top);
+        if (desc != null)
+            DsWidgets.Place(desc.rectTransform, 16f, cardH - CardDescH, CardW - 32f, CardDescH);
+
+        float ringTop = CardNameH + 12f;
+        PaintCrest(root, crest, new Rect(0f, ringTop, CardW, cardH - ringTop - CardDescH - 12f),
+                   CardSlotIcon);
+
+        return new CrestCard { Id = crest.name, Root = root, Fade = fade };
+    }
+
+    Image MakeArrow(string name, bool right, float panelW, float bodyH)
+    {
+        var img = DsWidgets.Icon(_picker, name, DsTheme.Chevron, DsTheme.Ink);
+        // A generated sprite has no atlas neighbours to avoid and no trim to
+        // honour, so the plain quad is both correct and cheaper.
+        img.useSpriteMesh = false;
+        PlaceCentred(img.rectTransform, ArrowCentreX(right, panelW) - ArrowSize * 0.5f,
+                     (bodyH - ArrowSize) * 0.5f, ArrowSize, ArrowSize);
+        if (right) img.rectTransform.localRotation = Quaternion.Euler(0f, 0f, 180f);
+        return img;
+    }
+
+    /// <summary>
+    /// Where an arrow sits: midway between the neighbour's visible sliver and
+    /// the centre card, so it crowds neither.
+    /// </summary>
+    static float ArrowCentreX(bool right, float panelW)
+    {
+        float cardLeft = (panelW - CardW) * 0.5f;
+        float peek = Mathf.Max(0f, panelW - (cardLeft + CardStride));
+        float cx = Mathf.Max(ArrowSize, (peek + cardLeft) * 0.5f);
+        return right ? panelW - cx : cx;
+    }
+
+    /// <summary>Where the row has to sit for card <paramref name="i"/> to be centred.</summary>
+    static float StripXFor(int i)
+    {
+        return (DsLayout.Current.Width - CardW) * 0.5f - i * CardStride;
+    }
+
+    /// <summary>
+    /// Place a rect by its centre rather than its top-left corner, so a scale
+    /// applied to it grows and shrinks in place. Children inside are unaffected
+    /// -- they anchor to the rect, not to its pivot.
+    /// </summary>
+    static void PlaceCentred(RectTransform rt, float x, float y, float w, float h)
+    {
+        rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = new Vector2(x + w * 0.5f, -(y + h * 0.5f));
+        rt.sizeDelta = new Vector2(w, h);
+    }
+
+    /// <summary>
+    /// Move one crest along and slide the row after it.
+    ///
+    /// The game's own bounds: SwitchSelectedCrest steps the index and does
+    /// nothing at all when that would leave the list, so the ends are stops
+    /// rather than a wrap.
+    /// </summary>
+    void StepCrest(int direction)
+    {
+        if (direction == 0 || _crestCards.Count == 0) return;
+        int next = _crestPick + (direction > 0 ? 1 : -1);
+        if (next < 0 || next >= _crestCards.Count) return;
+
+        _crestPick = next;
+        _stripFrom = _stripNow;
+        _stripTo = StripXFor(next);
+        _stripT = ScrollSeconds <= 0f ? 1f : 0f;
+        ApplyStrip();
+    }
+
+    /// <summary>Carry the row toward the chosen crest, linearly, as the game does.</summary>
+    void TickCrestPicker(float dt)
+    {
+        if (_strip == null || _stripT >= 1f) return;
+        float time = ScrollSeconds;
+        _stripT = time <= 0f ? 1f : Mathf.Min(1f, _stripT + dt / time);
+        _stripNow = Mathf.Lerp(_stripFrom, _stripTo, _stripT);
+        ApplyStrip();
+    }
+
+    /// <summary>Put the row where it has got to, and dress the cards to match.</summary>
+    void ApplyStrip()
+    {
+        if (_strip == null) return;
+
+        DsWidgets.Place(_strip, _stripNow, 0f,
+                        DsLayout.Current.Width, DsLayout.Current.Body.height);
+
+        for (int i = 0; i < _crestCards.Count; i++)
+        {
+            var card = _crestCards[i];
+            bool chosen = i == _crestPick;
+            if (card.Fade != null) card.Fade.alpha = chosen ? 1f : DeselectedFade;
+            if (card.Root != null)
+                card.Root.localScale = chosen
+                    ? Vector3.one
+                    : new Vector3(DeselectedScale, DeselectedScale, 1f);
+        }
+
+        DsWidgets.SetActive(_arrowLeft, _crestPick > 0);
+        DsWidgets.SetActive(_arrowRight, _crestPick >= 0 && _crestPick < _crestCards.Count - 1);
+    }
+
+    /// <summary>The crest under the arrows, which is the one EQUIP acts on.</summary>
+    string PickedCrestId()
+    {
+        return _crestPick >= 0 && _crestPick < _crestCards.Count ? _crestCards[_crestPick].Id : null;
+    }
+
+    /// <summary>
+    /// Everything the picker answers. Arrows first, because they are drawn over
+    /// the cards; then the cards themselves, where the centre one is the choice
+    /// and either neighbour is a step toward it.
+    /// </summary>
+    void PickerGesture(DsGesture g)
+    {
+        // A flick carries the row the way the thumb went, which is the gesture
+        // the arrows stand in for. Horizontal only: a vertical flick on a row
+        // that cannot move vertically is not aimed at it.
+        if (g.Type == DsGestureType.Fling)
+        {
+            if (Mathf.Abs(g.Delta.x) > Mathf.Abs(g.Delta.y))
+                StepCrest(g.Delta.x > 0f ? -1 : 1);
+            return;
+        }
+        if (g.Type != DsGestureType.Tap) return;
+
+        Vector2 p = DsPresentation.ToLayout(g.Position);
+        float panelW = DsLayout.Current.Width;
+        var body = DsLayout.Current.Body;
+
+        if (_crestPick > 0 && ArrowHit(false, panelW, body, p)) { StepCrest(-1); return; }
+        if (_crestPick < _crestCards.Count - 1 && ArrowHit(true, panelW, body, p))
+        { StepCrest(1); return; }
+
+        if (p.y < body.y || p.y > body.y + body.height) return;
+
+        for (int i = 0; i < _crestCards.Count; i++)
+        {
+            float left = _stripNow + i * CardStride;
+            if (p.x < left || p.x > left + CardW) continue;
+            if (i == _crestPick) ChooseCrest(_crestCards[i].Id);
+            else StepCrest(i > _crestPick ? 1 : -1);
+            return;
+        }
+    }
+
+    /// <summary>
+    /// An arrow's touch target, which is twice its art on each axis: the
+    /// chevron is a thin shape and a target drawn to it would be a thin target.
+    /// </summary>
+    static bool ArrowHit(bool right, float panelW, Rect body, Vector2 p)
+    {
+        float cx = ArrowCentreX(right, panelW);
+        float cy = body.y + body.height * 0.5f;
+        return p.x >= cx - ArrowSize && p.x <= cx + ArrowSize &&
+               p.y >= cy - ArrowSize && p.y <= cy + ArrowSize;
     }
 
     void ChooseCrest(string crestId)
@@ -913,13 +1199,21 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     /// </summary>
     public void CollectActions(List<DsAction> into)
     {
-        // While choosing, the only thing to offer is a way out. Equipping a
-        // tool into a crest you are in the middle of replacing is not a useful
-        // thing to be able to do.
+        // While choosing, the only things to offer are a way out and a way to
+        // take what is under the arrows. Equipping a TOOL into a crest you are
+        // in the middle of replacing is not a useful thing to be able to do.
         if (_choosingCrest)
         {
             into.Add(new DsAction("BACK", () => ShowCrestPicker(false), false,
                                   DsActionPlace.Pane));
+
+            // Second, so it lands at the BOTTOM of the strip and nearest the
+            // thumb -- the same rule EQUIP follows on the tab itself. Tapping
+            // the centre card does the same thing; this is what says so.
+            string picked = PickedCrestId();
+            if (!string.IsNullOrEmpty(picked))
+                into.Add(new DsAction("EQUIP", () => ChooseCrest(picked), false,
+                                      DsActionPlace.Pane));
             return;
         }
 
