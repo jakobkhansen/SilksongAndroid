@@ -336,6 +336,100 @@ public static class DsWidgets
         rt.anchoredPosition = new Vector2(-frac.x * w, -frac.y * h);
     }
 
+    /// <summary>
+    /// The box an <see cref="Icon"/> actually PAINTS inside the box it was
+    /// <see cref="Place"/>d in.
+    ///
+    /// For putting a cursor on one. An icon's rect is not its ink: the art is
+    /// fitted to the sprite's own aspect inside a square rect, and a sprite
+    /// trimmed in an atlas carries an offset besides -- so brackets hung on the
+    /// rect's corners frame a box the eye cannot see, and land off-centre by
+    /// however far the trim is uneven.
+    ///
+    /// This is Image.GenerateSprite's own arithmetic, spelled out rather than
+    /// approximated, because there are three separate things moving the ink and
+    /// missing any one of them leaves the cursor crooked in a way that looks
+    /// like a rounding error:
+    ///
+    ///   * preserveAspect fits the sprite's FULL rect into the rect, which is
+    ///     what sets the drawn size;
+    ///   * the mesh is then mapped through `vertex / bounds.size * drawnSize`,
+    ///     so how much of the drawn size the ink covers is the ratio of the two;
+    ///   * and it is finally shifted by `(rectPivot - spritePivot) * drawnSize`,
+    ///     which for our top-left-pivoted widgets is most of their own size.
+    ///
+    /// The mesh's own corners are read from Sprite.vertices rather than from
+    /// Sprite.bounds, so the answer does not depend on which of the two that
+    /// property turns out to describe.
+    ///
+    /// Only for icons drawn the way <see cref="Icon"/> draws them -- with
+    /// useSpriteMesh. A plain quad is placed by the sprite's PADDING instead,
+    /// which is different arithmetic.
+    /// </summary>
+    public static UnityEngine.Rect InkRect(Image img, UnityEngine.Rect box)
+    {
+        if (img == null || img.sprite == null || !img.useSpriteMesh) return box;
+        var sprite = img.sprite;
+
+        Vector2 full = sprite.rect.size;
+        if (full.x <= 0f || full.y <= 0f) return box;
+
+        float dw = box.width, dh = box.height;
+        if (img.preserveAspect)
+        {
+            float aspect = full.x / full.y;
+            if (dw / Mathf.Max(dh, 0.0001f) > aspect) dw = dh * aspect;
+            else dh = dw / Mathf.Max(aspect, 0.0001f);
+        }
+
+        Vector3 bounds = sprite.bounds.size;
+        if (bounds.x <= 0.0001f || bounds.y <= 0.0001f) return box;
+
+        Vector2 mid, ink;
+        if (!MeshBox(sprite, out mid, out ink)) return box;
+
+        Vector2 rectPivot = img.rectTransform.pivot;
+        Vector2 spritePivot = new Vector2(sprite.pivot.x / full.x, sprite.pivot.y / full.y);
+
+        // Where the mesh's centre lands, relative to the rect's own pivot.
+        float cx = (mid.x / bounds.x - (rectPivot.x - spritePivot.x)) * dw;
+        float cy = (mid.y / bounds.y - (rectPivot.y - spritePivot.y)) * dh;
+        float iw = (ink.x / bounds.x) * dw;
+        float ih = (ink.y / bounds.y) * dh;
+
+        // That space is y-UP from the pivot; a placed box is y-down from its
+        // top-left corner, which is (pivot.x, 1 - pivot.y) of the way into it.
+        float px = box.x + rectPivot.x * box.width + cx;
+        float py = box.y + (1f - rectPivot.y) * box.height - cy;
+        return new UnityEngine.Rect(px - iw * 0.5f, py - ih * 0.5f, iw, ih);
+    }
+
+    /// <summary>
+    /// A sprite mesh's corners, in the units and about the pivot that
+    /// Image.GenerateSprite maps from. Both are zero for a sprite with no mesh
+    /// worth measuring.
+    /// </summary>
+    static bool MeshBox(Sprite sprite, out Vector2 mid, out Vector2 size)
+    {
+        mid = Vector2.zero;
+        size = Vector2.zero;
+
+        Vector2[] v;
+        try { v = sprite.vertices; } catch { return false; }
+        if (v == null || v.Length == 0) return false;
+
+        float x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;
+        for (int i = 1; i < v.Length; i++)
+        {
+            if (v[i].x < x0) x0 = v[i].x; else if (v[i].x > x1) x1 = v[i].x;
+            if (v[i].y < y0) y0 = v[i].y; else if (v[i].y > y1) y1 = v[i].y;
+        }
+
+        mid = new Vector2((x0 + x1) * 0.5f, (y0 + y1) * 0.5f);
+        size = new Vector2(x1 - x0, y1 - y0);
+        return size.x > 0.0001f && size.y > 0.0001f;
+    }
+
     public static void Stretch(RectTransform rt, float pad = 0f)
     {
         rt.anchorMin = Vector2.zero;

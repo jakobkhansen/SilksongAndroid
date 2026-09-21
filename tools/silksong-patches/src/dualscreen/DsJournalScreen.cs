@@ -76,7 +76,32 @@ public class DsJournalScreen : IDsScreen
     const float ArtInsetFraction = 0.16f;
     // How far the clip extends past the list on each side, so a bracket on an
     // outer cell is drawn rather than shaved. See the clip in Build.
-    const float CursorBleed = 6f;
+    //
+    // Generous, because a bracket is drawn CENTRED on the corner it marks:
+    // half its own 64 px already sits outside the box it frames, and CaretReach
+    // now pushes it further out again. Sized so the leftmost column's bracket
+    // survives whole, which puts the clip's own edge on the panel's.
+    const float CursorBleed = 20f;
+
+    /// <summary>
+    /// How far the caret reaches past the ring it frames, and which way the
+    /// pair is nudged off the ring's centre.
+    ///
+    /// Knobs, and deliberately so. Everything up to here is arithmetic --
+    /// DsWidgets.InkRect says where the art actually lands, to the pixel -- but
+    /// where a pair of brackets should sit against a CIRCLE with a painted edge
+    /// is a judgement about the art rather than a measurement of it. The
+    /// geometric answer puts them on the bounding box, which is not where the
+    /// eye reads the frame as being.
+    ///
+    ///     adb shell 'echo "journal_caret_reach=12 journal_caret_dx=-6" > \
+    ///         /sdcard/Android/data/com.jakobkhansen.silksong/files/dualscreen_v2'
+    ///
+    /// Negative x and y are left and up; the file is read once per launch.
+    /// </summary>
+    static float CaretReach { get { return Mathf.Clamp(DsConfig.Int("journal_caret_reach", 8), -40, 60); } }
+    static float CaretNudgeX { get { return Mathf.Clamp(DsConfig.Int("journal_caret_dx", -4), -40, 40); } }
+    static float CaretNudgeY { get { return Mathf.Clamp(DsConfig.Int("journal_caret_dy", -4), -40, 40); } }
 
     // Centre column: the creature. Right column: what is known about it.
     //
@@ -497,13 +522,46 @@ public class DsJournalScreen : IDsScreen
         float x = col * (_cell + CellGap);
         float y = row * (_cellH + CellGap) - _scroll;
 
+        // The RING's ink, not the cell it was placed in. The cell is a square
+        // of layout; the ring is the game's own art, fitted to its own aspect
+        // and carrying the offset its atlas trim gave it. Framing the square
+        // therefore put the brackets a few pixels down and to the right of
+        // every portrait -- little enough to read as sloppiness rather than as
+        // a bug, and the same on all forty of them.
+        //
+        // Measured once per sprite rather than per paint: there are two rings
+        // in the whole grid, and reading a sprite's mesh allocates.
+        Rect box = new Rect(x, y, _cell, _cell);
+        Image ring = _selected < _cells.Count ? _cells[_selected].Ring : null;
+        if (ring != null)
+        {
+            if (!_inkKnown || ring.sprite != _inkSprite)
+            {
+                _inkSprite = ring.sprite;
+                _inkBox = DsWidgets.InkRect(ring, new Rect(0f, 0f, _cell, _cell));
+                _inkKnown = true;
+            }
+            box = new Rect(x + _inkBox.x, y + _inkBox.y, _inkBox.width, _inkBox.height);
+        }
+
+        // ...and then out past its edge, and nudged. The ring's ink is where
+        // the arithmetic ends and taste begins: see CaretReach.
+        float reach = CaretReach;
+        box = new Rect(box.x - reach + CaretNudgeX, box.y - reach + CaretNudgeY,
+                       box.width + reach * 2f, box.height + reach * 2f);
+
         // No clamping and no hiding: the cursor lives in the same scrolling list
         // as the portraits, so it travels with the one it is on and the list's
         // mask clips it exactly as it clips the picture. See the note in
         // DsIconGrid -- clamping parked the brackets at the top of the column
         // around nothing, and hiding left a selected entry unmarked.
-        _cursor.MoveTo(new Rect(x, y, _cell, _cell), null, _entries[_selected].Name);
+        _cursor.MoveTo(box, null, _entries[_selected].Name);
     }
+
+    /// <summary>The ring's ink within a cell, and the sprite it was read from.</summary>
+    Sprite _inkSprite;
+    Rect _inkBox;
+    bool _inkKnown;
 
     void PaintDetail()
     {

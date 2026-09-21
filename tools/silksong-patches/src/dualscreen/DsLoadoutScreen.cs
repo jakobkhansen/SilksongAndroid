@@ -206,7 +206,12 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                 if (tool == null) continue;
                 bool unlocked = false, equipped = false;
                 int left = 0;
-                try { unlocked = tool.IsUnlocked; } catch { }
+                // IsUnlockedNotHidden, so that a tool being SUPERSEDED counts
+                // as a change: taking the upgrade hides the old one without
+                // ever clearing its IsUnlocked flag, and a signature built on
+                // IsUnlocked alone would leave the stale pair on screen until
+                // something else happened to move.
+                try { unlocked = tool.IsUnlockedNotHidden; } catch { }
                 try { equipped = tool.IsEquipped; } catch { }
                 try { left = tool.SavedData.AmountLeft; } catch { }
                 hash = hash * 31 + (unlocked ? 1 : 0) + (equipped ? 2 : 0) + left * 7;
@@ -601,16 +606,21 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
             {
                 if (tool == null) continue;
 
+                // The game's own test, and deliberately NOT simply IsUnlocked:
+                // ToolItemManager.GetUnlockedTools filters on
+                // IsUnlockedNotHidden, which is `IsUnlocked && !IsHidden`.
+                //
+                // The second half is what keeps SUPERSEDED tools out. A tool
+                // replaced by a better one -- the Needle Phial, the Claw
+                // Mirror -- stays unlocked forever: ToolItem.Unlock calls
+                // `getReplaces.Lock()` on the one it supersedes, and Lock only
+                // sets IsHidden and strips the tool from every crest. It never
+                // touches IsUnlocked. So a list built on IsUnlocked shows both
+                // halves of every upgrade, one of which the player can no
+                // longer equip or use.
                 bool unlocked = false;
-                try { unlocked = tool.IsUnlocked; } catch { }
-                if (!unlocked)
-                {
-                    // A tool that is still hidden would be a spoiler; one that
-                    // is merely not yet found is shown dimmed.
-                    bool hidden = true;
-                    try { hidden = !tool.IsUnlockedNotHidden; } catch { }
-                    if (hidden) continue;
-                }
+                try { unlocked = tool.IsUnlockedNotHidden; } catch { }
+                if (!unlocked) continue;
 
                 DsSection bucket;
                 if (!buckets.TryGetValue(tool.Type, out bucket)) continue;
@@ -631,7 +641,6 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                     Description = DsText(tool.Description),
                     Icon = icon,
                     Tint = Color.white,
-                    Dim = !unlocked,
                     Badge = badge,
                     // The light behind a selected tool takes the colour of its
                     // type, the way the game's does -- see
@@ -887,7 +896,7 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     // ── EQUIP / UNEQUIP ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Offer the tool under the cursor, but only at a bench.
+    /// Offer what can be done to the thing under the cursor.
     ///
     /// That is the game's own rule -- InventoryItemToolManager.CanChangeEquips
     /// is `playerData.atBench` with a cheat override -- and the v3 notes ask for
@@ -895,11 +904,15 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
     /// differs from USE on the Inventory tab deliberately: a consumable you
     /// cannot drink yet is still a consumable, and saying so is useful, while a
     /// tool away from a bench is simply not something the panel can act on.
+    ///
+    /// UNLOCK is the one exception, because it is one in the game too:
+    /// InventoryToolCrestSlot.Submit answers a LOCKED socket and returns before
+    /// it ever reaches CanChangeEquips, so opening a socket with a Memory
+    /// Locket is something the player can do anywhere. Only what goes IN the
+    /// socket afterwards needs a bench.
     /// </summary>
     public void CollectActions(List<DsAction> into)
     {
-        if (!AtBench()) return;
-
         // While choosing, the only thing to offer is a way out. Equipping a
         // tool into a crest you are in the middle of replacing is not a useful
         // thing to be able to do.
@@ -910,8 +923,11 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
             return;
         }
 
-        into.Add(new DsAction("CREST", () => ShowCrestPicker(true), false,
-                              DsActionPlace.Pane));
+        bool atBench = AtBench();
+
+        if (atBench)
+            into.Add(new DsAction("CREST", () => ShowCrestPicker(true), false,
+                                  DsActionPlace.Pane));
 
         // A locked socket replaces EQUIP with the only thing that can be done
         // to it. Shown greyed rather than withdrawn when there is nothing to
@@ -929,6 +945,8 @@ public class DsLoadoutScreen : IDsScreen, IDsActionBar
                                   !can, DsActionPlace.Pane));
             return;
         }
+
+        if (!atBench) return;
 
         var tool = SelectedTool();
         if (tool == null) return;
