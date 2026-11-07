@@ -163,14 +163,27 @@ public class AnimatorRebindFix : MonoBehaviour
         StartCoroutine(EntryRebindPasses());
     }
 
-    // A burst of passes: immediately, next frame (after scene objects' Start() has
-    // run, in case a prop disables its animator there), then a couple of delayed
-    // ones to catch animators spawned just after the room loads. The sweep started
-    // in Start() keeps going afterwards, so nothing is left uncovered once this
-    // burst finishes.
+    // A burst of passes: next frame, then a couple of delayed ones to catch
+    // animators spawned just after the room loads. The sweep started in Start()
+    // keeps going afterwards, so nothing is left uncovered once this burst
+    // finishes.
+    //
+    // There is deliberately NO pass in the sceneLoaded callback itself. That
+    // callback runs after Awake/OnEnable but BEFORE the scene's Start() calls, and
+    // Start() is where props apply their saved state: PersistentItem.Start fires
+    // OnSetSaveState, and an already-opened Gate answers with
+    // Play(openAnim, 0, 1f) + Update(0f). A pass before that consumes the
+    // once-per-animator dedupe, so every later pass of the burst skips the prop,
+    // and the pose the game sets in Start() never gets written. Measured on
+    // device: the Under_07c "Bot Blocker" (an opened Gate) sat in its authored,
+    // CLOSED pose with its state at Open t>=1, and was only repaired by the
+    // scene-entry pass, once Hornet had dropped through top1 and was standing on
+    // it; the gate then opened UNDER her, shoved her back into top1's trigger and
+    // she was transitioned back up to Under_07b, every time (issue #40). Waiting
+    // one frame lets Start() run first, so the pass captures the state the game
+    // actually set and samples it before the hero arrives.
     IEnumerator RebindPasses()
     {
-        RebindIdleAnimators();
         yield return null;
         RebindIdleAnimators();
         yield return new WaitForSeconds(0.5f);
