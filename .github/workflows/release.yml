@@ -5,10 +5,10 @@
 # version it carries comes from a file someone has to bump on purpose.
 #
 # The version is VERSION at the repo root. Bump it in a commit, then run this
-# workflow. Re-running a version that already has a release REPLACES it, tag
-# included, so iterating on an unreleased version does not need a version bump
-# for every attempt -- but anything anyone already downloaded is discarded, so
-# bump VERSION once a build has been handed out.
+# workflow. A version that already has a release or a tag is refused before
+# anything is built: a published version is never replaced, because anything
+# anyone already downloaded would silently stop matching its release page.
+# To redo a release, bump VERSION (or delete the old release and tag by hand).
 #
 # A version with a -suffix (0.2.0-rc.1) is published as a prerelease.
 name: Release APK
@@ -77,20 +77,30 @@ jobs:
             echo "- dry run: \`${{ inputs.dry_run }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # A bare tag counts too: gh release create attaches to an existing tag
+      # as-is, so the release would describe whatever commit it points at
+      # rather than the one being built. A dry run only warns, so a build can
+      # still be checked before VERSION is bumped.
       - name: Check for an existing release
-        id: existing
-        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           tag="${{ steps.version.outputs.tag }}"
+          found=""
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::$tag already exists and will be REPLACED -- its release notes, download count and asset are discarded."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            found="a release"
+          elif [[ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]]; then
+            found="a tag"
+          fi
+          if [[ -z "$found" ]]; then
             echo "$tag is new."
+          elif [[ "$DRY_RUN" == "true" ]]; then
+            echo "::warning::$tag already has $found; a real run would refuse to publish it. Bump VERSION."
+          else
+            echo "::error::$tag already has $found. Published versions are never replaced: bump VERSION."
+            exit 1
           fi
 
       # ── Signing key ───────────────────────────────────────────────────────
@@ -260,24 +270,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
-          EXISTS: ${{ steps.existing.outputs.exists }}
         run: |
           set -euo pipefail
           tag="${{ steps.version.outputs.tag }}"
-
-          # Replacing rather than refusing, so re-running a version while it is
-          # being iterated on just works. The tag is deleted with the release --
-          # otherwise it would keep pointing at the commit the first attempt was
-          # built from, and the release would describe code that is not in it.
-          #
-          # This does discard the old release: its notes, its asset and its
-          # download count. That is the right trade while a version is still
-          # being shaped, and the wrong one once anybody is relying on a
-          # download link -- bump VERSION for those.
-          if [[ "$EXISTS" == "true" ]]; then
-            echo "Replacing the existing $tag"
-            gh release delete "$tag" --yes --cleanup-tag
-          fi
 
           # Deliberately no --generate-notes: that appends the commit and
           # contributor list, which is neither short nor stable across a
