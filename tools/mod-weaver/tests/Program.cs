@@ -30,6 +30,8 @@ internal static class Program
             ("rejected assemblies unavailable to string targets", RejectedStringTarget),
             ("generic member resolution remains best-effort", GenericMembers),
             ("builtin weave survives plugin composition", BuiltinComposition),
+            ("controller menu aliases survive remapping and repeated weaving", ControllerMenuTests.Bindings),
+            ("controller menu weave skips an unsupported API", ControllerMenuTests.MissingApi),
         };
         var failed = 0;
         foreach (var (name, run) in tests)
