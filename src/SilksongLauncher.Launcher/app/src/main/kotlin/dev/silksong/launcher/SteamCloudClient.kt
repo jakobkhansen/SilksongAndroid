@@ -206,6 +206,10 @@ class SteamCloudClient(session: SteamSession) {
         val beginResp = cloud.clientBeginFileUpload(beginReq)
             .toFuture().get(30, TimeUnit.SECONDS)
             ?: throw RuntimeException("clientBeginFileUpload returned no response")
+        // DuplicateRequest: Steam already stores these exact bytes (the
+        // game rewrites shared.dat unchanged on every launch). Nothing to
+        // upload, and no lease was taken, so there is nothing to commit.
+        if (beginResp.result == EResult.DuplicateRequest) return
         if (beginResp.result != EResult.OK)
             throw RuntimeException("clientBeginFileUpload for $cloudPath returned ${beginResp.result}")
         val begin = beginResp.body
