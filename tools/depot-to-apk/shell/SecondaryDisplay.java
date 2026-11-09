@@ -1,6 +1,7 @@
 package dev.silksong.shell;
 
 import android.app.Activity;
+import android.app.Dialog;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -12,8 +13,10 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.view.inspector.WindowInspector;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -139,7 +142,42 @@ final class SecondaryDisplay implements SurfaceHolder.Callback
             surface.getHolder().addCallback(this);
             discardGesture = false;
             Log.i(TAG, "Captured secondary surface on display " + display.getDisplayId());
+            keepOpenOnBack(candidate);
             return;
+        }
+    }
+
+    // The secondary window is Unity's Presentation, a Dialog, so a back
+    // gesture on that display cancels it. Unity never recreates it and its
+    // Vulkan swapchain then dereferences the dead surface (issue #26).
+    // There is no public route from a window's views to its Dialog;
+    // DecorView.mWindow is an "unsupported" hidden API, which Android still
+    // allows for reflection (verified on the Thor, Android 13).
+    private static void keepOpenOnBack(View decor)
+    {
+        try
+        {
+            for (Class<?> c = decor.getClass(); c != null && c != View.class; c = c.getSuperclass())
+            {
+                Field field;
+                try { field = c.getDeclaredField("mWindow"); }
+                catch (NoSuchFieldException e) { continue; }
+                field.setAccessible(true);
+                Object window = field.get(decor);
+                Window.Callback callback = window instanceof Window ? ((Window) window).getCallback() : null;
+                if (callback instanceof Dialog)
+                {
+                    ((Dialog) callback).setCancelable(false);
+                    Log.i(TAG, "Secondary window no longer closes on back");
+                    return;
+                }
+                break;
+            }
+            Log.w(TAG, "Secondary window is not a Dialog; back can still close it");
+        }
+        catch (ReflectiveOperationException | RuntimeException e)
+        {
+            Log.w(TAG, "Cannot stop back from closing the secondary window", e);
         }
     }
 
