@@ -16,7 +16,9 @@
 //
 // Counters refresh once per second to avoid creating GC pressure
 // from string allocation every frame; the actual numbers are
-// sampled every frame and averaged over the second.
+// sampled every frame and averaged over the second. The /proc, /sys
+// and battery readings are taken on a worker thread, never the main
+// thread (see Sample).
 //
 // Data sources (Android-specific, all read via plain file I/O —
 // no extra permissions needed; we sample /proc and /sys entries
@@ -42,6 +44,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Threading;
 using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.Profiling;
@@ -94,6 +97,33 @@ public class PerfOverlay : MonoBehaviour
     int _frameAccum;
     float _timeAccum;
     string _displayText = "";
+    // OnGUI runs at least twice a frame; measuring the text only when it
+    // changes keeps the overlay from allocating every frame.
+    readonly GUIContent _content = new GUIContent();
+    string _measuredText;
+    Vector2 _measuredSize;
+
+    // Everything read from /proc, /sys or the battery service. The
+    // power-supply nodes and BatteryManager both go to the fuel gauge,
+    // ~0.3 ms per read on the Thor and far slower on other devices; on the
+    // main thread that was a hitch every second (issue #33). A worker
+    // takes the readings and Refresh shows the latest set, so the device
+    // stats lag the frame stats by one refresh.
+    struct Sample
+    {
+        public float Cpu, CoreMax, Gpu, VoltageV, PowerW, BattTempC;
+        public long CurHz, CurrentUa;
+        public int BattLevel;
+        public string BattError;
+    }
+    static readonly Sample NoSample = new Sample
+    {
+        Cpu = -1f, CoreMax = -1f, Gpu = -1f, BattLevel = -1, BattTempC = float.NaN,
+    };
+    readonly object _sampleLock = new object();
+    Sample _sample = NoSample;
+    readonly AutoResetEvent _sampleWake = new AutoResetEvent(false);
+    volatile bool _samplerStop;
 
     // CPU baseline (jiffies). Updated each refresh tick.
     long _prevCpuActive, _prevCpuTotal;
@@ -246,6 +276,64 @@ public class PerfOverlay : MonoBehaviour
         SampleCpuOnce();
         StartRecorders();
         if (_logToFile) OpenLog();
+        new Thread(SamplerLoop) { IsBackground = true, Name = "PerfOverlaySampler" }.Start();
+        _sampleWake.Set();
+    }
+
+    void SamplerLoop()
+    {
+        // BatteryManager is a JNI object; a thread Unity did not create
+        // has to attach to the VM before calling it.
+        AndroidJNI.AttachCurrentThread();
+        try
+        {
+            while (true)
+            {
+                _sampleWake.WaitOne();
+                if (_samplerStop) return;
+                var s = TakeSample();
+                lock (_sampleLock) _sample = s;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[PerfOverlay] sampler stopped: " + ex.Message);
+        }
+        finally
+        {
+            AndroidJNI.DetachCurrentThread();
+        }
+    }
+
+    Sample TakeSample()
+    {
+        var s = NoSample;
+        s.Cpu = SampleCpu();
+        // Sample every tick (not just when cpu>=0) so the per-core baselines
+        // keep advancing and the CSV always has a peak-core value.
+        s.CoreMax = SampleMaxCore();
+        s.Gpu = _gpuKind != GpuKind.None ? SampleGpu() : -1f;
+        s.CurHz = TryReadHz(GpuCurFreqPath);
+        if (_batteryManager != null)
+        {
+            try
+            {
+                // BATTERY_PROPERTY_CAPACITY=4 (int %),
+                // BATTERY_PROPERTY_CURRENT_NOW=2 (long µA — negative
+                // while discharging on most OEMs, positive on a few).
+                s.BattLevel = _batteryManager.Call<int>("getIntProperty", 4);
+                s.CurrentUa = _batteryManager.Call<long>("getLongProperty", 2);
+                s.VoltageV = ReadBatteryVoltageVolts();
+                s.PowerW = s.VoltageV > 0f ? (Math.Abs(s.CurrentUa) / 1e6f) * s.VoltageV : 0f;
+            }
+            catch (Exception ex)
+            {
+                s.BattLevel = -1;
+                s.BattError = ex.GetType().Name;
+            }
+        }
+        if (_logToFile) s.BattTempC = ReadBatteryTempC();
+        return s;
     }
 
     // Built-in Profiler counters. StartNew never throws for an unknown name —
@@ -275,6 +363,8 @@ public class PerfOverlay : MonoBehaviour
 
     void OnDestroy()
     {
+        _samplerStop = true;
+        _sampleWake.Set();
         _rDraw.Dispose(); _rSetPass.Dispose(); _rBatches.Dispose();
         _rTris.Dispose(); _rVerts.Dispose(); _rGcAlloc.Dispose();
         _rMainThread.Dispose(); _rRenderThread.Dispose(); _rRenderThread2.Dispose();
@@ -342,24 +432,23 @@ public class PerfOverlay : MonoBehaviour
 
         AppendFrameBreakdown(sb);
 
-        float cpu = SampleCpu();
-        // Sample every tick (not just when cpu>=0) so the per-core baselines
-        // keep advancing and the CSV always has a peak-core value.
-        float coreMax = SampleMaxCore();
-        if (cpu >= 0f)
+        Sample s;
+        lock (_sampleLock) s = _sample;
+        _sampleWake.Set();
+
+        if (s.Cpu >= 0f)
         {
-            sb.Append("CPU ").Append(cpu.ToString("F0")).Append(" %");
-            if (coreMax >= 0f)
-                sb.Append("  (peak ").Append(coreMax.ToString("F0")).Append("%)");
+            sb.Append("CPU ").Append(s.Cpu.ToString("F0")).Append(" %");
+            if (s.CoreMax >= 0f)
+                sb.Append("  (peak ").Append(s.CoreMax.ToString("F0")).Append("%)");
             sb.Append('\n');
         }
 
         // Always emit the GPU line — even when we can't read a
         // number — so the overlay's layout stays stable across
         // frames and the user can tell "unavailable" from "0%".
-        float gpu = _gpuKind != GpuKind.None ? SampleGpu() : -1f;
         sb.Append("GPU ");
-        if (gpu >= 0f) sb.Append(gpu.ToString("F0")).Append(" %");
+        if (s.Gpu >= 0f) sb.Append(s.Gpu.ToString("F0")).Append(" %");
         else sb.Append("??");
 
         // GPU clock: cur / max in MHz. Lets the user see whether
@@ -368,11 +457,10 @@ public class PerfOverlay : MonoBehaviour
         // it's saturated (cur ≈ max and still dropping frames →
         // genuinely GPU-bound). This is the readout we'll watch when
         // A/B-testing a GPU max-frequency cap.
-        long curHz = TryReadHz(GpuCurFreqPath);
-        if (curHz > 0)
+        if (s.CurHz > 0)
         {
             sb.Append("  ");
-            sb.Append((curHz / 1_000_000)).Append('/');
+            sb.Append((s.CurHz / 1_000_000)).Append('/');
             if (_gpuMaxHz > 0) sb.Append((_gpuMaxHz / 1_000_000)).Append(" MHz");
             else sb.Append("? MHz");
         }
@@ -383,28 +471,18 @@ public class PerfOverlay : MonoBehaviour
         sb.Append("RAM ").Append(usedMem / (1024 * 1024)).Append(" / ")
           .Append(totalMem / (1024 * 1024)).Append(" MB\n");
 
-        int battLevel = -1;
-        long currentUa = 0;
-        float voltageV = 0f, powerW = 0f;
         if (_batteryManager != null)
         {
-            try
+            if (s.BattError != null)
+                sb.Append("BAT ?? (").Append(s.BattError).Append(")");
+            else if (s.BattLevel < 0)
+                sb.Append("BAT ??");
+            else
             {
-                // BATTERY_PROPERTY_CAPACITY=4 (int %),
-                // BATTERY_PROPERTY_CURRENT_NOW=2 (long µA — negative
-                // while discharging on most OEMs, positive on a few).
-                battLevel = _batteryManager.Call<int>("getIntProperty", 4);
-                currentUa = _batteryManager.Call<long>("getLongProperty", 2);
-                voltageV = ReadBatteryVoltageVolts();
-                powerW = voltageV > 0f ? (Math.Abs(currentUa) / 1e6f) * voltageV : 0f;
-                string dir = currentUa <= 0 ? "↓" : "↑";
-                sb.Append("BAT ").Append(battLevel).Append("%  ").Append(dir);
-                if (voltageV > 0f) sb.Append(powerW.ToString("F2")).Append(" W");
-                else sb.Append((Math.Abs(currentUa) / 1000f).ToString("F0")).Append(" mA");
-            }
-            catch (Exception ex)
-            {
-                sb.Append("BAT ?? (").Append(ex.GetType().Name).Append(")");
+                string dir = s.CurrentUa <= 0 ? "↓" : "↑";
+                sb.Append("BAT ").Append(s.BattLevel).Append("%  ").Append(dir);
+                if (s.VoltageV > 0f) sb.Append(s.PowerW.ToString("F2")).Append(" W");
+                else sb.Append((Math.Abs(s.CurrentUa) / 1000f).ToString("F0")).Append(" mA");
             }
         }
 
@@ -413,14 +491,15 @@ public class PerfOverlay : MonoBehaviour
         if (_drawOverlay) _displayText = sb.ToString();
 
         if (_logToFile && _csv != null)
-            WriteCsvRow(fps, frameMs, msP50, msP99, msMax, pctCap, cpu, coreMax, gpu, curHz,
-                        usedMem / (1024 * 1024), battLevel, ReadBatteryTempC(),
-                        voltageV, currentUa, powerW);
+            WriteCsvRow(fps, frameMs, msP50, msP99, msMax, pctCap, s.Cpu, s.CoreMax, s.Gpu, s.CurHz,
+                        usedMem / (1024 * 1024), s.BattLevel, s.BattTempC,
+                        s.VoltageV, s.CurrentUa, s.PowerW);
     }
 
-    // Appends the per-frame breakdown to the overlay text and logs the same to
-    // logcat (tag [PerfBreakdown]) so trends can be pulled offline without
-    // watching the screen. Called once per refresh tick (1 Hz).
+    // Appends the per-frame breakdown to the overlay text and, on benchmark
+    // runs (perf_log), logs the same to logcat (tag [PerfBreakdown]) so
+    // trends can be pulled offline without watching the screen. Called once
+    // per refresh tick (1 Hz).
     void AppendFrameBreakdown(StringBuilder sb)
     {
         // Prefer FrameTimingManager (gives GPU ms too) but it reports nothing on
@@ -480,7 +559,10 @@ public class PerfOverlay : MonoBehaviour
                       " renderThread=" + _rRenderThread.Valid + "/" + _rRenderThread2.Valid +
                       " dynB=" + _rDynBatch.Valid + " statB=" + _rStaticBatch.Valid + " instB=" + _rInstBatch.Valid);
         }
-        Debug.Log("[PerfBreakdown] main=" + mainMs.ToString("F1") + " rnd=" + rndMs.ToString("F1") +
+        // Debug.Log captures a stack trace in this player, which is not free
+        // once a second on the main thread; only benchmark runs want it.
+        if (_logToFile)
+            Debug.Log("[PerfBreakdown] main=" + mainMs.ToString("F1") + " rnd=" + rndMs.ToString("F1") +
                   " gpu=" + gpuMs.ToString("F1") + " ms | DC=" + dc + " SP=" + sp + " BT=" + bt +
                   " | dynB=" + (_rDynBatch.Valid ? _rDynBatch.LastValue : -1) +
                   " statB=" + (_rStaticBatch.Valid ? _rStaticBatch.LastValue : -1) +
@@ -504,15 +586,21 @@ public class PerfOverlay : MonoBehaviour
         if (!_drawOverlay) return;
         if (string.IsNullOrEmpty(_displayText)) return;
         EnsureStyle();
+        if (!ReferenceEquals(_measuredText, _displayText))
+        {
+            _measuredText = _displayText;
+            _content.text = _displayText;
+            _measuredSize = _style.CalcSize(_content);
+        }
         // Anchor top-right so the overlay sits away from the
         // health/geo HUD that lives top-left in Silksong's UI.
         const int pad = 8;
-        var size = _style.CalcSize(new GUIContent(_displayText));
+        var size = _measuredSize;
         float w = size.x + pad * 2;
         float h = size.y + pad * 2;
         var rect = new Rect(Screen.width - w - pad, pad, w, h);
         GUI.DrawTexture(rect, _bgTexture);
-        GUI.Label(new Rect(rect.x + pad, rect.y + pad, size.x, size.y), _displayText, _style);
+        GUI.Label(new Rect(rect.x + pad, rect.y + pad, size.x, size.y), _content, _style);
     }
 
     void EnsureStyle()
