@@ -20,6 +20,7 @@
 
 package dev.silksong.launcher
 
+import `in`.dragonbra.javasteam.enums.EResult
 import `in`.dragonbra.javasteam.protobufs.steamclient.SteammessagesCloudSteamclient.CCloud_ClientBeginFileUpload_Request
 import `in`.dragonbra.javasteam.protobufs.steamclient.SteammessagesCloudSteamclient.CCloud_ClientCommitFileUpload_Request
 import `in`.dragonbra.javasteam.protobufs.steamclient.SteammessagesCloudSteamclient.CCloud_ClientDeleteFile_Request
@@ -205,6 +206,8 @@ class SteamCloudClient(session: SteamSession) {
         val beginResp = cloud.clientBeginFileUpload(beginReq)
             .toFuture().get(30, TimeUnit.SECONDS)
             ?: throw RuntimeException("clientBeginFileUpload returned no response")
+        if (beginResp.result != EResult.OK)
+            throw RuntimeException("clientBeginFileUpload for $cloudPath returned ${beginResp.result}")
         val begin = beginResp.body
             ?: throw RuntimeException("clientBeginFileUpload response missing body")
 
@@ -214,6 +217,7 @@ class SteamCloudClient(session: SteamSession) {
         // the same file with TooManyPending until the lease times out
         // (~minutes). Track success and report it in the commit body.
         var allBlocksOk = false
+        var committed = false
         val octetStream = "application/octet-stream".toMediaType()
         try {
             for (block in begin.blockRequestsList) {
@@ -253,13 +257,19 @@ class SteamCloudClient(session: SteamSession) {
                 .setTransferSucceeded(allBlocksOk)
                 .build()
             try {
-                cloud.clientCommitFileUpload(commitReq).toFuture().get(30, TimeUnit.SECONDS)
+                val commitResp = cloud.clientCommitFileUpload(commitReq).toFuture().get(30, TimeUnit.SECONDS)
+                committed = commitResp != null && commitResp.result == EResult.OK &&
+                    // No blocks means Steam already holds these bytes; it
+                    // has nothing new to commit then.
+                    (commitResp.body?.fileCommitted == true || begin.blockRequestsCount == 0)
+                if (allBlocksOk && !committed)
+                    LauncherLog.log("Cloud commit rejected for $cloudPath: ${commitResp?.result}")
             } catch (t: Throwable) {
                 LauncherLog.log("Cloud commit failed for $cloudPath: ${t.message}")
             }
         }
 
-        if (!allBlocksOk)
+        if (!allBlocksOk || !committed)
             throw RuntimeException("Cloud upload failed for $cloudPath")
     }
 

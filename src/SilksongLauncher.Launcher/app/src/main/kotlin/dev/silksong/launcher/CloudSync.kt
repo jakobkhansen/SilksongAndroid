@@ -87,20 +87,16 @@ object CloudSync {
     private const val SAVE_SUBDIR = SaveDir.SUBDIR
 
     /**
-     * Fallback cloud-path prefix used when the user has NO existing
-     * cloud saves (we therefore can't sniff the prefix from the
-     * enumeration). The trailing slash is intentional — code that
-     * builds upload filenames does prefix + basename.
+     * Root of Silksong's cloud paths. `%WinAppDataLocalLow%` is Steam's
+     * per-platform path token; on Windows the desktop client expands it
+     * to LocalLow/Team Cherry/…, on Linux to a platform-equivalent path.
      *
-     * `%WinAppDataLocalLow%Team Cherry/Hollow Knight Silksong/`
-     * is Steam's per-platform path token; on Windows the desktop
-     * client expands it to LocalLow/Team Cherry/…, on Linux to a
-     * platform-equivalent path. The account id segment after this
-     * is normally inserted by Silksong itself on first save, but
-     * we have to invent one for "first push from a brand-new
-     * account" — see [pushItems] for the AccountID lookup.
+     * Saves live one folder deeper, in `<root><accountId>/`: the desktop
+     * game's save dir is persistentDataPath + "/" + UserId, and
+     * SteamOnlineSubsystem.UserId is GetSteamID().GetAccountID(). See
+     * [canonicalPrefix].
      */
-    private const val CLOUD_PREFIX_FALLBACK =
+    private const val CLOUD_ROOT =
         "%WinAppDataLocalLow%Team Cherry/Hollow Knight Silksong/"
 
     /** Phases emitted by [pullItems] and [pushItems]. */
@@ -173,7 +169,7 @@ object CloudSync {
             val cloud = SteamCloudClient(session)
             LauncherLog.log("Pull analyze: enumerating cloud files…")
             val allCloud = cloud.enumerateFiles(APP_ID)
-            val prefix = derivePrefix(allCloud)
+            val prefix = derivePrefix(allCloud, canonicalPrefix(session))
             val cloudFiles = filterRootLevel(allCloud, prefix)
             if (cloudFiles.size != allCloud.size) {
                 LauncherLog.log(
@@ -366,7 +362,7 @@ object CloudSync {
             val cloud = SteamCloudClient(session)
             LauncherLog.log("Push analyze: enumerating cloud files…")
             val allCloud = cloud.enumerateFiles(APP_ID)
-            val cloudPrefix = derivePrefix(allCloud)
+            val cloudPrefix = derivePrefix(allCloud, canonicalPrefix(session))
             val cloudFiles = filterRootLevel(allCloud, cloudPrefix)
             if (cloudFiles.size != allCloud.size) {
                 LauncherLog.log(
@@ -536,15 +532,26 @@ object CloudSync {
             // bytes on every launch). One re-enumeration after the
             // push lets us snap local mtime to cloud's authoritative
             // timestamp for each succeeded file, breaking the loop.
+            //
+            // It also proves the upload landed: Steam has accepted an
+            // upload and then not stored it (a path outside Silksong's
+            // cloud folder), and counting those as "ok" hid that from
+            // the user on every push.
             if (succeeded.isNotEmpty()) {
                 try {
                     val after = cloud.enumerateFiles(APP_ID).associateBy { it.filename }
                     for (item in succeeded) {
-                        val cur = after[item.cloudPath] ?: continue
+                        val cur = after[item.cloudPath]
+                        if (cur == null) {
+                            ok.decrementAndGet()
+                            failed.incrementAndGet()
+                            LauncherLog.log("  ↑ ${item.localFile.name}: FAILED — not on Steam Cloud after upload (${item.cloudPath})")
+                            continue
+                        }
                         item.localFile.setLastModified(cur.timestampUnix * 1000L)
                     }
                 } catch (t: Throwable) {
-                    LauncherLog.log("  (post-push mtime sync skipped: ${t.message ?: t.javaClass.simpleName})")
+                    LauncherLog.log("  (post-push verification skipped: ${t.message ?: t.javaClass.simpleName})")
                 }
             }
 
@@ -583,25 +590,36 @@ object CloudSync {
 
     /**
      * Derives the cloud-path directory prefix (everything up to and
-     * including the last '/') of the user's root save folder. We pick
-     * the cloud entry with the FEWEST path segments as our anchor:
+     * including the last '/') of the user's root save folder.
+     *
+     * [canonical] (`<root><accountId>/`, the folder the desktop game
+     * itself writes) wins whenever the cloud is empty or already holds
+     * something under it. An empty cloud used to fall back to the bare
+     * root with no account folder, and Steam silently dropped every
+     * upload there — a first push from Android never reached the cloud.
+     *
+     * Otherwise we sniff the cloud entry with the FEWEST path segments:
      * Silksong on desktop scatters historical backups across
      * `Restore_Points1/`, `Restore_Points2/` etc., and we want the
-     * canonical `<prefix>/<accountId>/` prefix that those folders
-     * live UNDER, not one of the subfolder prefixes themselves.
-     *
-     * Falls back to [CLOUD_PREFIX_FALLBACK] when the cloud is empty;
-     * pushes to a brand-new account end up at
-     *   `%WinAppDataLocalLow%Team Cherry/Hollow Knight Silksong/<basename>`
-     * which is a slightly degenerate layout (missing the per-account
-     * sub-folder) but Steam will still accept it. Silksong on desktop
-     * will normalise things on the next save.
+     * prefix those folders live UNDER, not one of the subfolders.
      */
-    private fun derivePrefix(cloudFiles: List<SteamCloudClient.CloudFile>): String {
-        val shortest = cloudFiles.minByOrNull { f -> f.filename.count { it == '/' } }
-            ?: return CLOUD_PREFIX_FALLBACK
+    private fun derivePrefix(
+        cloudFiles: List<SteamCloudClient.CloudFile>,
+        canonical: String,
+    ): String {
+        if (cloudFiles.isEmpty() || cloudFiles.any { it.filename.startsWith(canonical) })
+            return canonical
+        val shortest = cloudFiles.minBy { f -> f.filename.count { it == '/' } }
         val lastSlash = shortest.filename.lastIndexOf('/')
-        return if (lastSlash >= 0) shortest.filename.substring(0, lastSlash + 1) else CLOUD_PREFIX_FALLBACK
+        return if (lastSlash >= 0) shortest.filename.substring(0, lastSlash + 1) else canonical
+    }
+
+    /** `<root><accountId>/` for the signed-in user of [session]. */
+    private fun canonicalPrefix(session: SteamSession): String {
+        val accountId = session.steamClient.steamID?.accountID ?: 0L
+        if (accountId == 0L)
+            throw RuntimeException("Steam did not report an account id for this sign-in")
+        return "$CLOUD_ROOT$accountId/"
     }
 
     /**
