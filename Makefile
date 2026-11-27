@@ -7,6 +7,12 @@
 # On Windows run this from Git Bash. `bash` on PATH is WSL, which cannot read
 # the Windows paths this uses. Or avoid the question entirely: `make
 # docker-apk` builds on Linux in a container and needs nothing but Docker.
+#
+# Not from PowerShell or cmd: make then runs recipes through cmd.exe, which
+# fails on the first `VAR=value cmd` with "'DEBUGGABLE' is not recognized".
+# From PowerShell, hand the whole thing to Git Bash's own bash.exe:
+#
+#   & 'C:\Program Files\Git\bin\bash.exe' -lc 'cd "$(cygpath "$PWD")" && make dev'
 
 DEV     := tools/depot-to-apk/dev.sh
 ADB     ?= adb
