@@ -3,6 +3,12 @@
 This Cecil executable rewrites staged managed assemblies before IL2CPP. It
 does not load plugins into a running game.
 
+The `builtin` command also adds Android PlayStation menu aliases after
+`InputHandler.MapControllerButtons` rebuilds the game's bindings: Options
+opens pause, and Back/Share/Create open inventory. Existing bindings remain
+in place. The aliases are checked before insertion so controller reconnects
+do not accumulate duplicates. This runs on normal builds without a plugin.
+
 ## Composition and rejection
 
 Each patched target has one original body, one shared `__result`, and one
@@ -45,3 +51,6 @@ shared results, ref arguments, paired state, instance injection, multiple
 returns, exception regions, direct missing members and mismatched signatures,
 dependency cascades, genuine generic-resolution uncertainty, and builtin
 weave coexistence.
+Controller-menu regressions execute the woven IL across multiple return paths,
+repeated remapping, replacement action sets, missing actions, and a second
+weave; an incompatible input API leaves the original assembly unchanged.

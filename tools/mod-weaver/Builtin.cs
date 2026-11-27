@@ -90,7 +90,7 @@ internal static class Builtin
         var path = Path.Combine(assemblies, "Assembly-CSharp.dll");
         if (!File.Exists(path))
         {
-            notes.Add("aspect floor: no Assembly-CSharp.dll in the staged set; skipped");
+            notes.Add("builtin weaves: no Assembly-CSharp.dll in the staged set; skipped");
             return notes;
         }
 
@@ -107,11 +107,11 @@ internal static class Builtin
         }
         catch (Exception e)
         {
-            notes.Add($"aspect floor: cannot read Assembly-CSharp.dll ({e.GetType().Name}); skipped");
+            notes.Add($"builtin weaves: cannot read Assembly-CSharp.dll ({e.GetType().Name}); skipped");
             return notes;
         }
 
-        bool changed;
+        bool changed = false;
         try
         {
             changed = WeaveAspectFloor(assembly, notes);
@@ -119,7 +119,15 @@ internal static class Builtin
         catch (Exception e)
         {
             notes.Add($"aspect floor: not applied ({e.GetType().Name}: {e.Message})");
-            return notes;
+        }
+
+        try
+        {
+            changed |= ControllerMenuBindings.Weave(assembly.MainModule, notes);
+        }
+        catch (Exception e)
+        {
+            notes.Add($"controller menus: not applied ({e.GetType().Name}: {e.Message})");
         }
 
         if (!changed) return notes;
@@ -127,11 +135,11 @@ internal static class Builtin
         try
         {
             assembly.Write(path);
-            notes.Add("aspect floor: Assembly-CSharp.dll rewritten");
+            notes.Add("builtin weaves: Assembly-CSharp.dll rewritten");
         }
         catch (Exception e)
         {
-            notes.Add($"aspect floor: could not write Assembly-CSharp.dll ({e.GetType().Name}: {e.Message})");
+            notes.Add($"builtin weaves: could not write Assembly-CSharp.dll ({e.GetType().Name}: {e.Message})");
         }
         return notes;
     }
