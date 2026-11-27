@@ -73,6 +73,7 @@ Android SDK and a JDK, but not a game depot or a running Unity player.
 | `IntroSkipper` | optionally skip the studio logos and opening quote |
 | `TrapProbe` | live on-device diagnosis for stuck props; off unless asked for |
 | `AndroidRumble` | vibration: the game mixes it, Android never played it |
+| `GamepadCommandAlias` | pause and inventory on PlayStation/Xbox pads, whose middle buttons the game never bound |
 | `InputProbe` | live on-device diagnosis for dropped inputs; off unless asked for |
 | `ShaderWarmup` | prewarm shader variants to cut first-encounter hitches |
 | `InventoryTouchInput` | touch control for the game's own inventory |

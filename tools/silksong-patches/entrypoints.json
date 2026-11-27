@@ -38,6 +38,7 @@
     { "className": "ProfilerTopMarkers", "methodName": "Bootstrap", "loadTypes": 2 },
     { "className": "TrapProbe", "methodName": "Bootstrap", "loadTypes": 2 },
     { "className": "AndroidRumble", "methodName": "Bootstrap", "loadTypes": 0 },
+    { "className": "GamepadCommandAlias", "methodName": "Bootstrap", "loadTypes": 0 },
     { "className": "InputProbe", "methodName": "Bootstrap", "loadTypes": 0 }
   ]
 }
