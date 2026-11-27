@@ -974,6 +974,20 @@ class SetupActivity : Activity() {
 
                 // ── Step 2: the supporting tools ──────────────────────────
                 setStep(toolsStep, "Downloading supporting tools")
+                // An app update can move to another Unity engine, and every
+                // piece below finds the old one by a path that has not
+                // changed. So the old engine and what was built from it go
+                // first, once, before anything is fetched.
+                if (!UnityFetcher.isCurrent(unity)) {
+                    LauncherLog.log(
+                        "engine: ${UnityFetcher.stampedEngine(unity) ?: "unstamped"} -> ${UnityFetcher.ENGINE}",
+                    )
+                    setBusy(true, "switching to Unity ${UnityFetcher.UNITY_VERSION}", -1f, "")
+                    withContext(Dispatchers.IO) {
+                        BuildReset.clearEngine(this@SetupActivity, unity)
+                        UnityFetcher.markCurrent(unity)
+                    }
+                }
                 if (!UnityFetcher.isPresent(unity)) {
                     UnityFetcher.fetch(unity).collect { setBusy(true, it.step, it.fraction, it.detail) }
                 }

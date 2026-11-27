@@ -93,6 +93,66 @@ object BuildReset {
     }
 
     /**
+     * Deletes one Unity engine and everything built from it, so that the
+     * engine this app pins can be fetched and the game built against that.
+     *
+     * Narrower than [clear], because nobody asked for this: it runs once after
+     * an app update that changes [UnityFetcher.ENGINE]. So it keeps everything
+     * that does not depend on the engine -- the settings, the remembered depot
+     * folder and the retargeted content, which is minutes of rewriting bundles
+     * to arrive at the same bytes -- and takes everything that does:
+     *
+     *   gone    unity/          the old engine, IL2CPP and BCL, but not the
+     *                           Input System sources: those are pinned by
+     *                           their own version and digest
+     *           build/          the conversion, objects, libil2cpp.so, the
+     *                           player image, compiled patches and packages,
+     *                           and the stamps that call them current
+     *           staging/        engine libraries waiting to be installed
+     *           pkg/            the installed engine and player image
+     *           unity-dex/      the old engine's Java classes
+     *
+     *   kept    build/content.stamp, and everything [clear] keeps
+     *
+     * All of it has to go together. The steps that check whether they are
+     * current look at timestamps, counts and sizes, none of which say which
+     * engine a file came from -- and the new engine's runtime sources unpack
+     * with Unity's own, older, dates -- so a stale object or dex survives a
+     * rebuild that does not start from nothing.
+     */
+    fun clearEngine(context: Context, unity: File): Long {
+        BuildInstallation.invalidate(File(context.filesDir, "pkg"))
+        var freed = removeChildren(unity, keep = UNITY_KEEP)
+
+        val external = context.getExternalFilesDir(null)
+        if (external != null) {
+            freed += removeChildren(File(external, "build"), keep = BUILD_KEEP)
+            freed += remove(File(external, "staging"))
+        } else {
+            LauncherLog.log("clear: no external files dir; the old engine's build may be left behind")
+        }
+
+        for (name in listOf("pkg", "unity-dex")) freed += remove(File(context.filesDir, name))
+
+        LauncherLog.log("clear: freed ${freed / 1024 / 1024} MB of the previous engine")
+        return freed
+    }
+
+    /** Engine-independent, under unity/. */
+    private val UNITY_KEEP = setOf("packages")
+
+    /** Engine-independent, under build/: see [PlayerImage.retargetContent]. */
+    private val BUILD_KEEP = setOf("content.stamp")
+
+    private fun removeChildren(dir: File, keep: Set<String>): Long {
+        var freed = 0L
+        for (child in dir.listFiles().orEmpty()) {
+            if (child.name !in keep) freed += remove(child)
+        }
+        return freed
+    }
+
+    /**
      * Resets the game's settings and the launcher's, but not the sign-in.
      *
      * Through the SharedPreferences API rather than by deleting the files, and

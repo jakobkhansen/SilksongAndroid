@@ -73,6 +73,20 @@ metadata, so shortening it shifts every subsequent offset — it has to be
 re-serialized, not patched in place. `BuildSettings.m_Version` carries a second
 copy that must agree.
 
+**The engine is 6000.0.52f1, not the game's 6000.0.50f1.** The game was built
+with a private Unity build (`6000.0.50f1-uum-100966-branch1`, revision
+`16f07294548e`, made for an audio fix, UUM-100966). It is not on Unity's
+download servers or in its release API, so the closest engine that can be
+fetched is a public one. Stock 6000.0.50f1 has UUM-107650: an Animator
+disabled and re-enabled from script keeps running its state machine but writes
+only its default pose until it is rebound. This game toggles animators that
+way all over: paid bellway toll machines stood again on every visit, already
+opened gates came up shut, and sand worms froze. 6000.0.52f1 is the first
+6000.0 release with the fix (UUM-109250). Its release notes, and 6000.0.51f1's,
+carry no serialization or IL2CPP changes, and its `il2cpp.dll` is
+byte-identical to 6000.0.50f1's. The game's data is re-stamped with
+whichever version the engine is (above), so it loads unchanged.
+
 **A built player has no `m_BuildTargetGraphicsAPIs`.** The resolved list lives in
 `BuildSettings.m_GraphicsAPIs`, and a Linux build leaves `[17 OpenGLCore, 21 Vulkan]`
 behind. Android needs `[21]` alone.

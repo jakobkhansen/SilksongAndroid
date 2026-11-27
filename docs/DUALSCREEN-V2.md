@@ -81,7 +81,7 @@ Everything below was read off the device, not assumed.
 | Density | 369 dpi (~2.31×) |
 | Main display | 1920×1080 landscape |
 | Graphics API | **Vulkan only** — `PlayerImage.kt` sets API 21 and shader slices are stripped to Vulkan |
-| Unity | **6000.0.50f1** (Unity 6) |
+| Unity | **6000.0.52f1** (Unity 6); the game was built with 6000.0.50f1 — see `tools/depot-to-apk/README.md` |
 | Depot has | `UnityEngine.UI.dll`, `Unity.TextMeshPro.dll`, `Coffee.SoftMaskForUGUI.dll`, `Unity.Addressables.dll` |
 | CoreModule has | `AsyncGPUReadback.RequestIntoNativeArray`, `NativeArrayUnsafeUtility.ConvertExistingDataToNativeArray` (both verified present in the shipped assembly) |
 | Free layers | `TagManager.asset` leaves indices **3 and 6** unnamed and unused |

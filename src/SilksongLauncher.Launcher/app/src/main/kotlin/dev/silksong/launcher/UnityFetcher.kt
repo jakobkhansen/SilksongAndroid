@@ -37,19 +37,33 @@ import kotlin.coroutines.coroutineContext
 
 object UnityFetcher {
 
-    const val UNITY_VERSION = "6000.0.50f1"
+    // Not the game's own 6000.0.50f1. Stock 6000.0.50f1 has UUM-107650: an
+    // Animator disabled and re-enabled from script keeps running its state
+    // machine but writes only its default pose until it is rebound, which on
+    // this game leaves paid bellway toll machines standing, opened gates shut
+    // and sand worms frozen. 6000.0.52f1 is the first 6000.0 release with the
+    // fix (UUM-109250). The game itself was built on a private Unity branch of
+    // 6000.0.50f1 that is not published anywhere; see tools/depot-to-apk/README.md.
+    const val UNITY_VERSION = "6000.0.52f1"
 
     // The changeset is part of every download URL. It is the hash the player
-    // reports at startup: "Version '6000.0.50f1 (f1ef1dca8bff)'".
-    private const val CHANGESET = "f1ef1dca8bff"
+    // reports at startup: "Version '6000.0.52f1 (9e4086222921)'".
+    private const val CHANGESET = "9e4086222921"
     private const val DL = "https://download.unity3d.com/download_unity/$CHANGESET"
+
+    /**
+     * Which engine this app runs. Everything downloaded under [rootFor] and
+     * everything built from it belongs to exactly one of these, so it is also
+     * part of [BuildInstallation.signature].
+     */
+    const val ENGINE = "$UNITY_VERSION ($CHANGESET)"
 
     private const val IL2CPP_DLL_SHA256 =
         "02d9d225cc8968fe39284dfbf2a9912796b3b0666d274294cfa6b90cf5e946bb"
     private const val IL2CPP_CONFIG_SHA256 =
         "38d4d2855d372bb2a12de7dce3cde110d1ec9780232a6a298153bee96c352259"
     private const val MSCORLIB_SHA256 =
-        "2efab59f0bdc59e1242b40203aff1f96e529e880f752585286c2816871e4496c"
+        "488cadc98f9d6596ae954e6b9bbfbc72f6e1142ff9fa98de6cc9e8baf2034988"
 
     /**
      * Roughly how much of the editor archive gets read before everything
@@ -61,8 +75,8 @@ object UnityFetcher {
 
     // Unity's own value, published per artifact through its releases API. For
     // this version the Android module is offered only as a macOS .pkg.
-    private const val ANDROID_PKG_MD5 = "8dfad5f83024fa533ac02b58a83d0898"
-    private const val ANDROID_PKG_BYTES = 673_712_656L
+    private const val ANDROID_PKG_MD5 = "cf56c6b46324f8e95f14063b4c5cfea8"
+    private const val ANDROID_PKG_BYTES = 673_854_911L
 
     /** Everything lands under here, and is skipped if already present. */
     fun rootFor(context: android.content.Context): File =
@@ -75,11 +89,43 @@ object UnityFetcher {
         val detail: String = "",
     )
 
-    /** True once both pieces are on disk. */
+    /** True once every piece is on disk, and they are this app's [ENGINE]. */
     fun isPresent(root: File): Boolean =
-        File(root, "editor/Editor/Data/il2cpp/build/deploy/il2cpp.dll").isFile &&
+        isCurrent(root) &&
+            File(root, "editor/Editor/Data/il2cpp/build/deploy/il2cpp.dll").isFile &&
             File(packageDir(root), "InputSystem/Unity.InputSystem.asmdef").isFile &&
             engineLibsIn(File(root, "android")) != null
+
+    /**
+     * Which engine the downloads under [root] belong to.
+     *
+     * The pieces are found by path, and the paths are the same in every
+     * version, so without this an app update that moves to another engine
+     * finds the old one on disk, calls it present, and builds the game against
+     * it -- or worse, pairs the new engine's libraries with code compiled for
+     * the old one. Nothing downloaded before this existed carries one, which
+     * is the right answer for all of it: it is 6000.0.50f1.
+     */
+    private fun engineStamp(root: File) = File(root, "engine")
+
+    /** Whether everything under [root] was fetched for this app's [ENGINE]. */
+    fun isCurrent(root: File): Boolean = stampedEngine(root) == ENGINE
+
+    /** What [root] was last stamped with, or null when it never was. */
+    fun stampedEngine(root: File): String? =
+        runCatching { engineStamp(root).readText().trim() }.getOrNull()
+
+    /**
+     * Claims [root] for this app's [ENGINE].
+     *
+     * Only once nothing from another engine is left in it (see
+     * [BuildReset.clearEngine]), and before the first piece is fetched: every
+     * piece fetched after that was checked against this engine's digests, so
+     * an interrupted download resumes instead of starting over.
+     */
+    fun markCurrent(root: File) {
+        BuildInstallation.writeAtomic(engineStamp(root), ENGINE)
+    }
 
     /**
      * Where the Android module's arm64 libraries ended up.

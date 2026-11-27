@@ -193,4 +193,21 @@ class BuildInstallationTest {
         assertThrows(IOException::class.java) { Mods.markInstalled(out) }
         assertFalse(File(out, "mods.installed.stamp").exists())
     }
+
+    @Test fun unityPiecesFromAnotherEngineAreNotPresent() {
+        val unity = temp.newFolder("unity")
+        for (path in listOf(
+            "editor/Editor/Data/il2cpp/build/deploy/il2cpp.dll",
+            "packages/com.unity.inputsystem/InputSystem/Unity.InputSystem.asmdef",
+            "android/Variations/il2cpp/Release/Libs/arm64-v8a/libunity.so",
+        )) File(unity, path).apply { parentFile!!.mkdirs(); writeText("piece") }
+
+        // Every download made before the stamp existed was 6000.0.50f1.
+        assertFalse(UnityFetcher.isPresent(unity))
+        File(unity, "engine").writeText("6000.0.50f1 (f1ef1dca8bff)")
+        assertFalse(UnityFetcher.isPresent(unity))
+
+        UnityFetcher.markCurrent(unity)
+        assertTrue(UnityFetcher.isPresent(unity))
+    }
 }

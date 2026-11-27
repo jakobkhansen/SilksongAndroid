@@ -14,6 +14,10 @@ object BuildInstallation {
 
     fun signature(assets: AssetManager): String {
         val md = MessageDigest.getInstance("SHA-256")
+        // The engine is not among the assets -- it is downloaded on the device
+        // -- but a game built against one engine cannot run on another, so an
+        // update that changes it must count as a different build.
+        md.update(UnityFetcher.ENGINE.toByteArray(Charsets.UTF_8))
         fun walk(path: String) {
             val names = assets.list(path).orEmpty().sorted()
             if (names.isEmpty()) {

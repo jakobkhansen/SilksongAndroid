@@ -40,10 +40,10 @@
 set -e
 
 ROOT="${ROOT:-/data/local/tmp/unity}"
-UNITY_VERSION="${UNITY_VERSION:-6000.0.50f1}"
+UNITY_VERSION="${UNITY_VERSION:-6000.0.52f1}"
 # The changeset is part of every download URL. It is the hash the player
-# reports at startup ("Version '6000.0.50f1 (f1ef1dca8bff)'").
-UNITY_CHANGESET="${UNITY_CHANGESET:-f1ef1dca8bff}"
+# reports at startup ("Version '6000.0.52f1 (9e4086222921)'").
+UNITY_CHANGESET="${UNITY_CHANGESET:-9e4086222921}"
 INPUTSYSTEM_VERSION="${INPUTSYSTEM_VERSION:-1.14.2}"
 BUILD_TOOLS="${BUILD_TOOLS:-r34}"
 
@@ -62,7 +62,7 @@ mkdir -p "$ROOT" "$ROOT/dl"
 #
 # All are pinned to $UNITY_VERSION / $INPUTSYSTEM_VERSION / $BUILD_TOOLS above.
 # Changing any of those versions means replacing the digest beside it.
-ANDROID_PKG_MD5="8dfad5f83024fa533ac02b58a83d0898"
+ANDROID_PKG_MD5="cf56c6b46324f8e95f14063b4c5cfea8"
 INPUTSYSTEM_SHA256="875008478396009708fdcd333d8b3108097a575652e36e9f3ecde66e0af21f26"
 BUILD_TOOLS_SHA256="e858c4b60069d0431051b225d384413b1643e1289b00a4825aed347f25bd510f"
 
@@ -72,7 +72,7 @@ BUILD_TOOLS_SHA256="e858c4b60069d0431051b225d384413b1643e1289b00a4825aed347f25bd
 # is no use when most of it is never fetched.
 EDITOR_FILES="Editor/Data/il2cpp/build/deploy/il2cpp.dll 02d9d225cc8968fe39284dfbf2a9912796b3b0666d274294cfa6b90cf5e946bb
 Editor/Data/il2cpp/libil2cpp/il2cpp-config.h 38d4d2855d372bb2a12de7dce3cde110d1ec9780232a6a298153bee96c352259
-Editor/Data/MonoBleedingEdge/lib/mono/unityaot-linux/mscorlib.dll 2efab59f0bdc59e1242b40203aff1f96e529e880f752585286c2816871e4496c"
+Editor/Data/MonoBleedingEdge/lib/mono/unityaot-linux/mscorlib.dll 488cadc98f9d6596ae954e6b9bbfbc72f6e1142ff9fa98de6cc9e8baf2034988"
 
 # Where to stop reading the editor archive, as a first guess. This is not a
 # constant the result depends on: if the wanted trees have not all arrived by
@@ -179,7 +179,7 @@ fetch() {
 # instead of 4.29 GB.
 if wanted editor && ! have "$ROOT/editor/Editor/Data/il2cpp"; then
     limit=$((EDITOR_FIRST_TRY_MB * 1024 * 1024))
-    full=4501932484
+    full=4301350560
     while :; do
         say "streaming $((limit / 1024 / 1024)) MiB of the editor archive for il2cpp + BCL"
         rm -rf "$ROOT/editor"; mkdir -p "$ROOT/editor"

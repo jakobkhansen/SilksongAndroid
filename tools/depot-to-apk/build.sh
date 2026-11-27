@@ -46,7 +46,7 @@ PKG="${PKG:-com.jakobkhansen.silksong}"
 APP_LABEL="${APP_LABEL:-Hollow Knight: Silksong}"
 # The version the stock engine reports. The depot is stamped with an internal
 # branch build of the same numeric version and must be normalised to this.
-UNITY_VERSION="${UNITY_VERSION:-6000.0.50f1}"
+UNITY_VERSION="${UNITY_VERSION:-6000.0.52f1}"
 # GraphicsDeviceType: 21=Vulkan. Android has no OpenGLCore(17), which is what a
 # Linux build leaves behind.
 GFX_APIS="${GFX_APIS:-21}"

@@ -108,6 +108,7 @@ the button again after a patch edit skips the ones that cannot have changed:
 
 | Step | Stamp | Skipped when |
 | --- | --- | --- |
+| Unity engine download | `unity/engine` | it names the engine the app pins (`UnityFetcher.ENGINE`). Otherwise that engine's downloads and everything built from them are deleted first (`BuildReset.clearEngine`); settings, the depot, saves and `build/content.stamp` stay |
 | IL2CPP conversion | `build/cpp.done`, staged assemblies, `build/mods.stamp` + `build/mods.converted` | conversion completed and its assemblies, mod inputs and weaver are unchanged |
 | Player image + `data.apk` | `build/image.stamp` | the conversion output, entry points and depot are unmoved |
 | Content retarget | `build/content.stamp` | the bundle tree is the one already retargeted |
@@ -119,6 +120,8 @@ rewrites the content tree in place.
 Delete a stamp to force that step alone. `make game-reset` drops the lot.
 
 The installed game has a separate completion marker, `files/pkg/.built`.
+It holds a signature of the APK's on-device assets and the Unity engine, so an
+app update that changes either one makes the game build again.
 It is removed before a build or reset can change installed files and written
 atomically only after the engine, player image, content and installed mod
 records all finish. Setup and the launch button both require it: an interrupted rebuild
