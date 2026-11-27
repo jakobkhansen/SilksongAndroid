@@ -15,7 +15,8 @@
 //     (cloud newer than local) raises the same keep-local / keep-remote
 //     dialog as the manual Push button; Cancel aborts, nothing uploads.
 //
-//   Show perf overlay — toggles the in-game OnGUI HUD.
+//   Perf overlay — dropdown for the in-game OnGUI HUD: off, minimal
+//     (FPS only) or detailed.
 //
 // All toggles default to OFF so the launcher behaves identically to
 // the manual-button-only baseline until the user opts in. Persisted
@@ -27,7 +28,11 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.Spinner
 import android.widget.Switch
 
 class SettingsActivity : Activity() {
@@ -35,7 +40,7 @@ class SettingsActivity : Activity() {
     private lateinit var settings: SettingsStore
     private lateinit var swAutoPull: Switch
     private lateinit var swAutoPush: Switch
-    private lateinit var swPerfOverlay: Switch
+    private lateinit var spPerfOverlay: Spinner
     private lateinit var swSkipIntro: Switch
     private lateinit var swDualScreen: Switch
     private lateinit var swShowTopHud: Switch
@@ -49,7 +54,7 @@ class SettingsActivity : Activity() {
 
         swAutoPull = findViewById(R.id.sw_auto_pull)
         swAutoPush = findViewById(R.id.sw_auto_push)
-        swPerfOverlay = findViewById(R.id.sw_perf_overlay)
+        spPerfOverlay = findViewById(R.id.sp_perf_overlay)
         swSkipIntro = findViewById(R.id.sw_skip_intro)
         swDualScreen = findViewById(R.id.sw_dual_screen)
         swShowTopHud = findViewById(R.id.sw_show_top_hud)
@@ -59,7 +64,10 @@ class SettingsActivity : Activity() {
 
         swAutoPull.isChecked = settings.autoPull
         swAutoPush.isChecked = settings.autoPush
-        swPerfOverlay.isChecked = settings.perfOverlay
+        spPerfOverlay.adapter = ArrayAdapter.createFromResource(
+            this, R.array.settings_perf_overlay_modes, R.layout.settings_spinner_item,
+        ).apply { setDropDownViewResource(R.layout.settings_spinner_dropdown_item) }
+        spPerfOverlay.setSelection(settings.perfOverlayMode.ordinal, false)
         swSkipIntro.isChecked = settings.skipIntro
         swDualScreen.isChecked = settings.dualScreen
         swShowTopHud.isChecked = settings.showTopHud
@@ -80,10 +88,16 @@ class SettingsActivity : Activity() {
             settings.autoPush = checked
             LauncherLog.log("Settings: auto-push → $checked")
         }
-        swPerfOverlay.setOnCheckedChangeListener { _, checked ->
-            settings.perfOverlay = checked
-            LauncherLog.log("Settings: perf overlay → $checked (takes effect on next game launch)")
-        }
+        spPerfOverlay.setOnItemSelectedListener(object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>, view: View?, position: Int, id: Long) {
+                val mode = SettingsStore.PerfOverlayMode.values()[position]
+                // Spinner reports its first layout as a selection too.
+                if (mode == settings.perfOverlayMode) return
+                settings.perfOverlayMode = mode
+                LauncherLog.log("Settings: perf overlay → ${mode.name.lowercase()} (takes effect on next game launch)")
+            }
+            override fun onNothingSelected(parent: AdapterView<*>) {}
+        })
         swSkipIntro.setOnCheckedChangeListener { _, checked ->
             settings.skipIntro = checked
             LauncherLog.log("Settings: skip intro → $checked (takes effect on next game launch)")

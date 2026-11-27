@@ -1,7 +1,8 @@
-// PerfOverlay — top-left OnGUI overlay showing FPS, CPU/GPU load,
+// PerfOverlay — top-right OnGUI overlay showing FPS, CPU/GPU load,
 // RAM, and battery during gameplay. Driven by the
 // `perf_overlay` boolean in the launcher's SharedPreferences
-// (file `launcher_settings`), which the Settings screen flips. We
+// (file `launcher_settings`), which the Settings screen flips;
+// `perf_overlay_mode=minimal` shrinks it to just the FPS number. We
 // read the pref ONCE at startup via JNI on the main thread; if
 // it's false the overlay never instantiates itself and there's
 // zero per-frame cost. Flipping the toggle from Settings only
@@ -54,6 +55,8 @@ public class PerfOverlay : MonoBehaviour
 {
     const string PREFS_NAME = "launcher_settings";
     const string KEY_PERF_OVERLAY = "perf_overlay";
+    // "minimal" draws only the FPS number; anything else is the full readout.
+    const string KEY_PERF_OVERLAY_MODE = "perf_overlay_mode";
     // Separate from perf_overlay so a benchmark run can LOG without DRAWING:
     // the OnGUI overlay costs ~50µs/frame which would skew the watts we're
     // trying to measure. When perf_log is on we write a config-stamped CSV
@@ -74,21 +77,23 @@ public class PerfOverlay : MonoBehaviour
         // read across processes from its SharedPreferences.
         bool draw = SilksongPatches.Settings.GetBool(KEY_PERF_OVERLAY, false);
         bool log = SilksongPatches.Settings.GetBool(KEY_PERF_LOG, false);
+        bool minimal = SilksongPatches.Settings.GetString(KEY_PERF_OVERLAY_MODE, "detailed") == "minimal";
         // Instantiate if EITHER drawing or logging is requested.
         if (!draw && !log) return;
 
         s_drawOverlay = draw;
         s_logToFile = log;
+        s_minimal = minimal;
         var go = new GameObject("__PerfOverlay__");
         DontDestroyOnLoad(go);
         go.AddComponent<PerfOverlay>();
-        Debug.Log($"[PerfOverlay] enabled (draw={draw} log={log})");
+        Debug.Log($"[PerfOverlay] enabled (draw={draw} minimal={minimal} log={log})");
     }
 
     // Config passed from Bootstrap into the instance. AddComponent calls Awake
     // synchronously, so we can't set instance fields between construct and
     // Awake — stash on statics and read them in Awake.
-    static bool s_drawOverlay, s_logToFile;
+    static bool s_drawOverlay, s_logToFile, s_minimal;
 
     // Per-frame samples — we accumulate over REFRESH_INTERVAL and
     // emit once. Keeping just the running aggregate avoids the
@@ -223,6 +228,7 @@ public class PerfOverlay : MonoBehaviour
     // if the process is killed.
     bool _drawOverlay = true;     // mirror of s_drawOverlay (set in Awake)
     bool _logToFile;              // mirror of s_logToFile
+    bool _minimal;                // mirror of s_minimal
     StreamWriter _csv;
     string _csvPath;
     float _logStartTime;          // realtimeSinceStartup at first row
@@ -252,6 +258,7 @@ public class PerfOverlay : MonoBehaviour
     {
         _drawOverlay = s_drawOverlay;
         _logToFile = s_logToFile;
+        _minimal = s_minimal;
         try
         {
             using var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
@@ -426,6 +433,14 @@ public class PerfOverlay : MonoBehaviour
         }
         _frameMsCount = 0;
 
+        // Minimal mode shows only the FPS number. Without a CSV to feed there
+        // is nothing else to gather, so skip the breakdown and device sample.
+        if (_minimal && !_logToFile)
+        {
+            _displayText = fps.ToString("F0");
+            return;
+        }
+
         var sb = new StringBuilder(192);
         sb.Append("FPS ").Append(fps.ToString("F0")).Append("  (")
           .Append(frameMs.ToString("F1")).Append(" ms)\n");
@@ -488,7 +503,7 @@ public class PerfOverlay : MonoBehaviour
 
         // Only materialise the display string when we'll actually draw it —
         // saves a per-second allocation in log-only mode.
-        if (_drawOverlay) _displayText = sb.ToString();
+        if (_drawOverlay) _displayText = _minimal ? fps.ToString("F0") : sb.ToString();
 
         if (_logToFile && _csv != null)
             WriteCsvRow(fps, frameMs, msP50, msP99, msMax, pctCap, s.Cpu, s.CoreMax, s.Gpu, s.CurHz,

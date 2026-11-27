@@ -28,8 +28,14 @@
     <string name="settings_auto_pull_subtitle">Download newer cloud saves right before the game starts.</string>
     <string name="settings_auto_push">Upload cloud saves after playing</string>
     <string name="settings_auto_push_subtitle">Upload changed local saves when you return from the game.</string>
-    <string name="settings_perf_overlay">Show in-game perf overlay</string>
-    <string name="settings_perf_overlay_subtitle">Top-right overlay with FPS, CPU and GPU load, RAM, and battery level and drain.</string>
+    <string name="settings_perf_overlay">In-game perf overlay</string>
+    <string name="settings_perf_overlay_subtitle">Top-right overlay. Minimal shows just the FPS; detailed adds CPU and GPU load, RAM, and battery level and drain.</string>
+    <!-- Order matches SettingsStore.PerfOverlayMode. -->
+    <string-array name="settings_perf_overlay_modes">
+        <item>Off</item>
+        <item>Minimal</item>
+        <item>Detailed</item>
+    </string-array>
 
     <string name="settings_skip_intro">Skip intro on startup</string>
     <string name="settings_skip_intro_subtitle">Skip the studio logos and opening quote and go straight to the main menu.</string>

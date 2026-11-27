@@ -30,19 +30,30 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_AUTO_PUSH, false)
         set(value) { prefs.edit().putBoolean(KEY_AUTO_PUSH, value).apply() }
 
+    enum class PerfOverlayMode { OFF, MINIMAL, DETAILED }
+
     /**
-     * When enabled, an OnGUI overlay rendered in the Unity game shows
-     * live FPS / CPU / GPU / battery stats in the top-left corner.
-     * Read from the launcher process here for the UI; the actual
-     * overlay lives in PerfOverlay.cs (Unity side) which reads the
-     * SAME SharedPreferences key via JNI at startup. We share the
-     * underlying prefs file because the launcher process
-     * (`:launcher`) and the game process (default) share package
-     * data even though they run in separate processes.
+     * The in-game OnGUI overlay (PerfOverlay.cs, Unity side): off, minimal
+     * (just the FPS number) or detailed (FPS, frame breakdown, CPU, GPU, RAM
+     * and battery). Handed to the game by [exportForGame].
+     *
+     * Persisted as the original `perf_overlay` on/off key plus a separate
+     * `perf_overlay_mode`, so a setting saved before the mode existed reads
+     * back as DETAILED -- the only look the overlay had then.
      */
-    var perfOverlay: Boolean
-        get() = prefs.getBoolean(KEY_PERF_OVERLAY, false)
-        set(value) { prefs.edit().putBoolean(KEY_PERF_OVERLAY, value).apply() }
+    var perfOverlayMode: PerfOverlayMode
+        get() = when {
+            !prefs.getBoolean(KEY_PERF_OVERLAY, false) -> PerfOverlayMode.OFF
+            prefs.getString(KEY_PERF_OVERLAY_MODE, MODE_DETAILED) == MODE_MINIMAL -> PerfOverlayMode.MINIMAL
+            else -> PerfOverlayMode.DETAILED
+        }
+        set(value) {
+            val edit = prefs.edit().putBoolean(KEY_PERF_OVERLAY, value != PerfOverlayMode.OFF)
+            if (value != PerfOverlayMode.OFF)
+                edit.putString(KEY_PERF_OVERLAY_MODE,
+                               if (value == PerfOverlayMode.MINIMAL) MODE_MINIMAL else MODE_DETAILED)
+            edit.apply()
+        }
 
     /**
      * When enabled, skip Silksong's startup intro (studio logos +
@@ -124,7 +135,10 @@ class SettingsStore(context: Context) {
     fun exportForGame(context: Context) {
         val dir = context.getExternalFilesDir(null) ?: return
         val text = buildString {
-            append(KEY_PERF_OVERLAY).append('=').append(perfOverlay).append('\n')
+            val perf = perfOverlayMode
+            append(KEY_PERF_OVERLAY).append('=').append(perf != PerfOverlayMode.OFF).append('\n')
+            append(KEY_PERF_OVERLAY_MODE).append('=')
+                .append(if (perf == PerfOverlayMode.MINIMAL) MODE_MINIMAL else MODE_DETAILED).append('\n')
             append(KEY_SKIP_INTRO).append('=').append(skipIntro).append('\n')
             append(KEY_DUAL_SCREEN).append('=').append(dualScreen).append('\n')
             append(KEY_SHOW_TOP_HUD).append('=').append(showTopHud).append('\n')
@@ -151,6 +165,9 @@ class SettingsStore(context: Context) {
         const val KEY_AUTO_PULL = "auto_pull"
         const val KEY_AUTO_PUSH = "auto_push"
         const val KEY_PERF_OVERLAY = "perf_overlay"
+        const val KEY_PERF_OVERLAY_MODE = "perf_overlay_mode"
+        const val MODE_MINIMAL = "minimal"
+        const val MODE_DETAILED = "detailed"
         const val KEY_SKIP_INTRO = "skip_intro"
         const val KEY_DUAL_SCREEN = "dualscreen_enabled"
         const val KEY_SHOW_TOP_HUD = "dualscreen_show_top_hud"
