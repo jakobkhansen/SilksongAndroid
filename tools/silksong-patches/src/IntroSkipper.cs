@@ -5,7 +5,7 @@
 // Why a runtime hook (and not a source patch):
 //
 //   The port deliberately doesn't patch the game's own code — it only ADDS
-//   MonoBehaviours (ResolutionConfigurator, PerfOverlay, AnimatorRebindFix, …).
+//   MonoBehaviours (ResolutionConfigurator, PerfOverlay, AspectGate, …).
 //   This stays in keeping with that: a small bootstrapped behaviour that drives
 //   the game's OWN animator instead of editing StartManager.
 //

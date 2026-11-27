@@ -71,8 +71,6 @@ Android SDK and a JDK, but not a game depot or a running Unity player.
 | `ResolutionConfigurator` | the resolution the player chose, remembered across launches; shape matched to the window; landscape only |
 | `AspectGate` | fill screens the game letterboxes — foldables, 4:3 — when switched on |
 | `IntroSkipper` | optionally skip the studio logos and opening quote |
-| `AnimatorRebindFix` | rebind animators that load disabled, so they play |
-| `WormAnimatorFix` | the off-camera frozen sand worm in Blasted Steps |
 | `TrapProbe` | live on-device diagnosis for stuck props; off unless asked for |
 | `AndroidRumble` | vibration: the game mixes it, Android never played it |
 | `InputProbe` | live on-device diagnosis for dropped inputs; off unless asked for |

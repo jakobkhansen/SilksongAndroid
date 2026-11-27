@@ -34,8 +34,6 @@
     { "className": "DualScreenV2", "methodName": "Bootstrap", "loadTypes": 0 },
     { "className": "InventoryTouchInput", "methodName": "Bootstrap", "loadTypes": 0 },
 
-    { "className": "AnimatorRebindFix", "methodName": "Bootstrap", "loadTypes": 2 },
-    { "className": "WormAnimatorFix", "methodName": "Bootstrap", "loadTypes": 2 },
     { "className": "ShaderWarmup", "methodName": "Bootstrap", "loadTypes": 0 },
     { "className": "ProfilerTopMarkers", "methodName": "Bootstrap", "loadTypes": 2 },
     { "className": "TrapProbe", "methodName": "Bootstrap", "loadTypes": 2 },
